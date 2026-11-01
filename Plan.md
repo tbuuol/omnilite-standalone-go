@@ -336,10 +336,9 @@ Konsens ist alles. Ein Indexer, der an einer Stelle abweicht, ist wertlos.
 - Projektname: **OmniLite Standalone** (`omnilite-standalone`).
 - DEx: kein automatisches Zahlen. Abschließen ist immer manuell.
 - Neue Wallet-Adressen nur `M…` (BIP49, wie liteworlds.quest).
+- Lizenz: MIT (wie OmniLite). Portierter Code behält die Copyright-Hinweise der Omni-Core-Entwickler.
+- Repo: `github.com/tbuuol/omnilite-standalone`.
 
-**Offene Entscheidungen**
-- Lizenz (OmniLite ist MIT; Portierung als MIT naheliegend).
-- GitHub-Remote: eigenes Repo oder unter einer Org.
 
 ---
 
