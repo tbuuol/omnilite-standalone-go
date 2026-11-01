@@ -12,6 +12,7 @@ import (
 	"github.com/tbuuol/omnilite-standalone/internal/chain"
 	"github.com/tbuuol/omnilite-standalone/internal/omni"
 	"github.com/tbuuol/omnilite-standalone/internal/rpc"
+	"github.com/tbuuol/omnilite-standalone/internal/state"
 	"github.com/tbuuol/omnilite-standalone/internal/store"
 )
 
@@ -154,6 +155,10 @@ func TestConnectBlock(t *testing.T) {
 		if !ok || string(v) != want {
 			t.Errorf("blocktx %d = %q, want %s", idx, v, want)
 		}
+	}
+	// The state engine ran: a has no tokens, so the send is invalid.
+	if v, ok, _ := st.Get(ctx, state.NsResult, "c1"); !ok || !strings.Contains(string(v), `"code":-60025`) {
+		t.Errorf("result c1 = %s", v)
 	}
 	// p1 is fetched once; c1 is found in the block itself.
 	if node.calls != 1 {

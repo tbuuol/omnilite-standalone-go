@@ -20,3 +20,9 @@ rpcconnect=127.0.0.1
 
 # Blocks of undo data kept for reorgs (minimum 10).
 #undodepth=100
+
+# Regtest only: extra senders allowed to send feature activations and alerts
+# (like OmniLite's -omniactivationallowsender / -omnialertallowsender), comma-separated.
+# This changes the computed state, so never set it on mainnet.
+#omniactivationallowsender=any
+#omnialertallowsender=any

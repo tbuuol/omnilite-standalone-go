@@ -13,6 +13,7 @@ import (
 
 	"github.com/tbuuol/omnilite-standalone/internal/omni"
 	"github.com/tbuuol/omnilite-standalone/internal/rpc"
+	"github.com/tbuuol/omnilite-standalone/internal/state"
 	"github.com/tbuuol/omnilite-standalone/internal/store"
 	"github.com/tbuuol/omnilite-standalone/internal/syncer"
 )
@@ -63,6 +64,8 @@ type Indexer struct {
 	Node Node
 	Dec  *omni.Decoder
 	Log  *slog.Logger
+	// State holds the testing switches of the state engine.
+	State state.Options
 
 	// prev caches outputs of transactions fetched for input lookups.
 	prev map[string][]omni.Output
@@ -77,6 +80,11 @@ func (ix *Indexer) ConnectBlock(ctx context.Context, tx *store.BlockTx, hdr *rpc
 	}
 	if blk.Hash != hdr.Hash || blk.Height != hdr.Height {
 		return fmt.Errorf("node returned block %s at %d for %s at %d", blk.Hash, blk.Height, hdr.Hash, hdr.Height)
+	}
+
+	st := state.New(tx, ix.Dec.Params, ix.State)
+	if err := st.BeginBlock(blk.Height); err != nil {
+		return err
 	}
 
 	inBlock := make(map[string]*rpc.Tx, len(blk.Tx))
@@ -97,7 +105,7 @@ func (ix *Indexer) ConnectBlock(ctx context.Context, tx *store.BlockTx, hdr *rpc
 		if !ix.Dec.HasMarker(outs) || ix.Dec.EncodingClass(outs) == omni.NoMarker {
 			continue
 		}
-		rec, err := ix.decode(ctx, t, outs, inBlock)
+		rec, msg, err := ix.decode(ctx, t, outs, inBlock)
 		if err != nil {
 			return err
 		}
@@ -118,18 +126,30 @@ func (ix *Indexer) ConnectBlock(ctx context.Context, tx *store.BlockTx, hdr *rpc
 		if ix.Log != nil {
 			ix.Log.Debug("omni transaction", "block", blk.Height, "txid", rec.Txid, "kind", rec.Kind, "type", rec.Type, "sender", rec.Sender)
 		}
+		if msg == nil {
+			// DEx payments need the DEx state of phase 4. They can only match
+			// an accept, which already marks the state incomplete.
+			continue
+		}
+		res, err := st.Apply(&state.Tx{Txid: rec.Txid, Block: blk.Height, Index: idx, BlockHash: blk.Hash, Sender: rec.Sender, Msg: msg})
+		if err != nil {
+			return err
+		}
+		if ix.Log != nil && res.Unsupported {
+			ix.Log.Warn("transaction type not implemented yet, state is incomplete from here", "block", blk.Height, "txid", rec.Txid, "type", rec.Type)
+		}
 	}
-	return nil
+	return st.EndBlock(blk.Height, blk.Time)
 }
 
 // decode parses one marked transaction. It returns nil for transactions
-// OmniLite drops without recording them.
-func (ix *Indexer) decode(ctx context.Context, t *rpc.Tx, outs []omni.Output, inBlock map[string]*rpc.Tx) (*Record, error) {
+// OmniLite drops without recording them. The message is nil for DEx payments.
+func (ix *Indexer) decode(ctx context.Context, t *rpc.Tx, outs []omni.Output, inBlock map[string]*rpc.Tx) (*Record, *omni.Message, error) {
 	ins := make([]omni.Output, len(t.Vin))
 	for i, in := range t.Vin {
 		o, err := ix.prevout(ctx, in.Txid, in.Vout, inBlock)
 		if err != nil {
-			return nil, fmt.Errorf("tx %s input %d: %w", t.Txid, i, err)
+			return nil, nil, fmt.Errorf("tx %s input %d: %w", t.Txid, i, err)
 		}
 		ins[i] = o
 	}
@@ -140,10 +160,10 @@ func (ix *Indexer) decode(ctx context.Context, t *rpc.Tx, outs []omni.Output, in
 		if ix.Log != nil {
 			ix.Log.Debug("omni transaction rejected", "txid", t.Txid, "code", rej.Code, "reason", rej.Reason)
 		}
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil || p == nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	rec := &Record{Txid: t.Txid, Class: p.Class.String(), Sender: p.Sender, Reference: p.Reference, Fee: p.Fee}
@@ -151,20 +171,20 @@ func (ix *Indexer) decode(ctx context.Context, t *rpc.Tx, outs []omni.Output, in
 		rec.Kind = KindDExPayment
 		rec.Payments = ix.Dec.DExPayments(outs)
 		if len(rec.Payments) == 0 {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return rec, nil
+		return rec, nil, nil
 	}
 	m, err := omni.Interpret(p.Payload, p.Sender, p.Reference, ix.Dec.Params)
 	if errors.Is(err, omni.ErrInvalidPayload) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rec.Kind, rec.Version, rec.Type = KindOmni, m.Version, m.Type
 	rec.Payload = hex.EncodeToString(p.Payload)
-	return rec, nil
+	return rec, m, nil
 }
 
 func (ix *Indexer) prevout(ctx context.Context, txid string, vout uint32, inBlock map[string]*rpc.Tx) (omni.Output, error) {

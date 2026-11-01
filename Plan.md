@@ -230,6 +230,15 @@ Zeile in OmniLite 0.18.1, aus der sie stammt.
 - Gültig/Ungültig mit identischen Fehlercodes speichern.
 - **Fertig, wenn:** Balances und Properties bis zum Tip mit dem Referenz-Node übereinstimmen
   (für Blöcke, in denen nur diese Typen vorkommen).
+- **Stand:** umgesetzt (`internal/state`): Simple Send, Send All, Issuance (fixed/managed), Grant/Revoke, Change
+  Issuer, Any Data, Activations/Deactivations (inkl. Live-Schaltung am Aktivierungsblock) und Alerts, mit
+  den Fehlercodes von OmniLite. Restricted Send gibt es in OmniLite nicht (kein Interpreter, Typ 2 ist
+  strukturell ungültig). Nachgebaute Eigenheiten: `getIssuer` vergleicht nur Blockhöhen (ein Issuer-Wechsel
+  später im selben Block zählt schon), Change Issuer auf Property 1/2 ändert nichts, Deaktivierung von
+  Feature 18 setzt Block 999999. Typen aus Phase 4 werden als „unsupported“ gespeichert; ab der ersten
+  solchen Tx gilt der State als unvollständig (`-check` zeigt das an). Grants auf NFT-Properties buchen die
+  Balance, die Token-Ranges fehlen noch. Für Regtest gibt es `omniactivationallowsender` und
+  `omnialertallowsender`. Der Abgleich mit dem Referenz-Node steht aus.
 
 ### Phase 4 – Komplexe Logik
 - Crowdsales (inkl. Early Bonus, Issuer-Anteil, Deadline, Close), STO (v0 und v1),

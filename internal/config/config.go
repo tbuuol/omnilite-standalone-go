@@ -35,6 +35,12 @@ type Config struct {
 	// UndoDepth is how many blocks of undo data are kept for reorgs.
 	UndoDepth int64
 
+	// ActivationAllowSenders and AlertAllowSenders authorize extra senders of
+	// activations and alerts, like OmniLite's -omniactivationallowsender and
+	// -omnialertallowsender. For regtest only: they change the state.
+	ActivationAllowSenders []string
+	AlertAllowSenders      []string
+
 	Check bool
 }
 
@@ -76,7 +82,7 @@ func Load(args []string) (*Config, error) {
 	datadir := flags.String("datadir", defaultDataDir(), "data directory")
 	check := flags.Bool("check", false, "check the node connection and exit")
 	set := map[string]*string{}
-	for _, k := range []string{"network", "rpcconnect", "rpcport", "rpcuser", "rpcpassword", "rpccookiefile", "pollinterval", "undodepth"} {
+	for _, k := range []string{"network", "rpcconnect", "rpcport", "rpcuser", "rpcpassword", "rpccookiefile", "pollinterval", "undodepth", "omniactivationallowsender", "omnialertallowsender"} {
 		set[k] = flags.String(k, "", "see "+FileName)
 	}
 	if err := flags.Parse(args); err != nil {
@@ -135,7 +141,20 @@ func Load(args []string) (*Config, error) {
 			return nil, fmt.Errorf("undodepth: want a number >= 10, got %q", v)
 		}
 	}
+	c.ActivationAllowSenders = splitList(values["omniactivationallowsender"])
+	c.AlertAllowSenders = splitList(values["omnialertallowsender"])
 	return c, nil
+}
+
+// splitList splits a comma-separated list and drops empty entries.
+func splitList(v string) []string {
+	var out []string
+	for _, s := range strings.Split(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func readFile(path string, values map[string]string) error {

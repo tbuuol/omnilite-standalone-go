@@ -132,3 +132,23 @@ func TestNetworkMismatch(t *testing.T) {
 		t.Fatal("opening a regtest database as main succeeded")
 	}
 }
+
+func TestScan(t *testing.T) {
+	s := openTest(t, 100)
+	connect(t, s, 1, func(tx *BlockTx) {
+		for _, k := range []string{"a/2", "a/1", "ab", "b/1", "a/3"} {
+			must(t, tx.Put("test", k, []byte(k)))
+		}
+		must(t, tx.Delete("test", "a/3"))
+		kvs, err := tx.Scan("test", "a/")
+		must(t, err)
+		if len(kvs) != 2 || kvs[0].Key != "a/1" || kvs[1].Key != "a/2" {
+			t.Fatalf("scan = %+v", kvs)
+		}
+	})
+	kvs, err := s.Scan(context.Background(), "test", "")
+	must(t, err)
+	if len(kvs) != 4 {
+		t.Fatalf("full scan = %+v", kvs)
+	}
+}

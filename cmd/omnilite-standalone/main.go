@@ -16,6 +16,7 @@ import (
 	"github.com/tbuuol/omnilite-standalone/internal/indexer"
 	"github.com/tbuuol/omnilite-standalone/internal/omni"
 	"github.com/tbuuol/omnilite-standalone/internal/rpc"
+	"github.com/tbuuol/omnilite-standalone/internal/state"
 	"github.com/tbuuol/omnilite-standalone/internal/store"
 	"github.com/tbuuol/omnilite-standalone/internal/syncer"
 )
@@ -83,7 +84,10 @@ func run(ctx context.Context, cfg *config.Config) error {
 	s := &syncer.Syncer{
 		Src:   client,
 		Store: st,
-		Proc:  &indexer.Indexer{Node: client, Dec: dec, Log: slog.Default()},
+		Proc: &indexer.Indexer{Node: client, Dec: dec, Log: slog.Default(), State: state.Options{
+			ActivationAllowSenders: cfg.ActivationAllowSenders,
+			AlertAllowSenders:      cfg.AlertAllowSenders,
+		}},
 		Start: cfg.Chain.OmniGenesis,
 		Poll:  cfg.PollInterval,
 		Log:   slog.Default(),
@@ -168,6 +172,9 @@ func runCheck(ctx context.Context, cfg *config.Config) bool {
 		line("Database", "%s (empty)", cfg.DBPath())
 	default:
 		line("Database", "%s (block %d)", cfg.DBPath(), tip.Height)
+	}
+	if v, ok, err := st.Get(ctx, state.NsMeta, "incomplete"); err == nil && ok {
+		line("State", "incomplete from %s (logic follows in phase 4)", v)
 	}
 	return ok
 }

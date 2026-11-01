@@ -20,7 +20,8 @@ import (
 // schemaVersion changes whenever the stored data changes meaning, also when
 // the processor starts writing new records: older databases must be rebuilt.
 // 2: Omni transaction records (phase 2).
-const schemaVersion = 2
+// 3: balances, properties, activations and alerts (phase 3).
+const schemaVersion = 3
 
 const schema = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -347,4 +348,60 @@ func scanBlock(row *sql.Row) (*Block, error) {
 		return nil, err
 	}
 	return &b, nil
+}
+
+// KV is a state entry returned by Scan.
+type KV struct {
+	Key   string
+	Value []byte
+}
+
+// Scan returns all entries of ns whose key starts with prefix, ordered by
+// key (byte order), including the changes made so far in this block.
+func (t *BlockTx) Scan(ns, prefix string) ([]KV, error) {
+	return scan(t.ctx, t.tx, ns, prefix)
+}
+
+// Scan returns all entries of ns whose key starts with prefix, ordered by key.
+func (s *Store) Scan(ctx context.Context, ns, prefix string) ([]KV, error) {
+	return scan(ctx, s.db, ns, prefix)
+}
+
+type rowsQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func scan(ctx context.Context, q rowsQueryer, ns, prefix string) ([]KV, error) {
+	query := `SELECT key, value FROM state WHERE ns = ? AND key >= ? ORDER BY key`
+	args := []any{ns, prefix}
+	if end, ok := prefixEnd(prefix); ok {
+		query = `SELECT key, value FROM state WHERE ns = ? AND key >= ? AND key < ? ORDER BY key`
+		args = append(args, end)
+	}
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var res []KV
+	for rows.Next() {
+		var kv KV
+		if err := rows.Scan(&kv.Key, &kv.Value); err != nil {
+			return nil, err
+		}
+		res = append(res, kv)
+	}
+	return res, rows.Err()
+}
+
+// prefixEnd returns the smallest key greater than every key with prefix.
+func prefixEnd(prefix string) (string, bool) {
+	b := []byte(prefix)
+	for i := len(b) - 1; i >= 0; i-- {
+		if b[i] < 0xff {
+			b[i]++
+			return string(b[:i+1]), true
+		}
+	}
+	return "", false
 }
