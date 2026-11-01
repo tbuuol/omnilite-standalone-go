@@ -1,6 +1,6 @@
-# OmniLite Indexer – Plan
+# OmniLite Standalone – Plan
 
-Ein eigenständiger OmniLite-Indexer, der **nicht** an eine bestimmte Litecoin-Core-Version gekoppelt ist.
+**OmniLite Standalone** ist ein eigenständiger OmniLite-Indexer, der **nicht** an eine bestimmte Litecoin-Core-Version gekoppelt ist.
 Er verbindet sich per Standard-RPC mit einem beliebigen, aktuellen `litecoind`, liest die Blöcke,
 dekodiert Omni-Transaktionen selbst, berechnet den kompletten Omni-State (Balances, Properties,
 Crowdsales, DEx, NFTs, Freeze, Activations) und stellt ihn über eine API bereit.
@@ -120,10 +120,15 @@ Der Wallet-Teil sitzt auf der State Engine. Er weiß damit immer genau, welche T
 und welche davon in DEx-Offers oder Accepts reserviert sind.
 
 **Schlüssel**
-- Eigene HD-Wallet: BIP39-Seed, Standard ist BIP44 P2PKH (`L…`, `m/44'/2'/0'`). Optional BIP49
-  P2SH-P2WPKH (`M…`, günstigere Gebühren). Kein Bech32, weil OmniLite das als Sender nicht akzeptiert
-  (siehe Abschnitt 2).
-- Import einzelner WIF-Keys (bestehende Issuer-Adressen) und reine Watch-only-Adressen.
+- Eigene HD-Wallet mit BIP39-Seed. **Neue Adressen sind ausschließlich `M…`** (BIP49 P2SH-P2WPKH,
+  Pfad `m/49'/2'/0'/0/i`). Das ist der Standard-Adresstyp von OmniLite 0.18.1 (`DEFAULT_ADDRESS_TYPE =
+  P2SH_SEGWIT`) und genau das, was die LiteWorlds-Wallet erzeugt (`blockchain.js`). Derselbe Seed ergibt
+  also dieselben Adressen wie auf liteworlds.quest.
+- Kein Bech32 (OmniLite akzeptiert das nicht als Sender). `L…` (P2PKH) wird **nicht** neu erzeugt.
+- Import einzelner WIF-Keys. Auch alte `L…`-Adressen lassen sich importieren, damit Token darauf nicht
+  festsitzen. Ziel ist, sie auf `M…` umzuziehen.
+- Reine Watch-only-Adressen.
+- Das Lesen bleibt davon unberührt: Der Indexer verarbeitet natürlich alle Adresstypen, die OmniLite kennt.
 - Keystore verschlüsselt (Argon2id + AES-256-GCM), Entsperren mit Passphrase, automatisches Sperren.
 - Austauschbare Signer:
   1. interner Keystore (Standard),
@@ -196,7 +201,7 @@ Zeile in OmniLite 0.18.1, aus der sie stammt.
 ### Phase 0 – Grundgerüst
 - Go-Modul, Config (RPC-URL, User/Pass, DB-Pfad, Netzwerk), Logging.
 - RPC-Client für `litecoind`, Prüfung auf `-txindex`.
-- **Fertig, wenn:** `omnilite-indexer --check` meldet Node-Version, Höhe und txindex-Status.
+- **Fertig, wenn:** `omnilite-standalone --check` meldet Node-Version, Höhe und txindex-Status.
 
 ### Phase 1 – Block-Pipeline und Reorgs
 - Blöcke ab `GENESIS_BLOCK` lesen, Höhe und Hash in der DB speichern, Tip folgen (Polling oder ZMQ).
@@ -258,10 +263,16 @@ Zeile in OmniLite 0.18.1, aus der sie stammt.
 
 ### Phase 9 – DEx-Handel
 - Verkaufen: `omni_senddexsell`, `omni_sendnewdexorder`, `omni_sendupdatedexorder`, `omni_sendcanceldexorder`.
-- Kaufen: `omni_senddexaccept` (die Mindestgebühr `minacceptfee` des Offers einhalten), dann
-  `omni_senddexpay`: LTC-Zahlung als Class-A-Tx mit Exodus-Output und Output an den Seller.
-- **Zahlungs-Wächter:** Nach einem Accept läuft ein Payment Window (in Blöcken). Der Indexer verfolgt
-  offene Accepts, warnt vor Ablauf und kann die Zahlung automatisch senden, wenn das gewünscht ist.
+- Kaufen läuft in zwei Schritten, wie auf liteworlds.quest:
+  1. **Reservieren** = `omni_senddexaccept` (Typ 22). Die Token werden beim Seller als „accepted“
+     reserviert. Die Mindestgebühr `minacceptfee` des Offers muss eingehalten werden.
+  2. **Abschließen** = `omni_senddexpay`: die LTC-Zahlung als Class-A-Tx mit Exodus-Output und Output
+     an den Seller. Erst damit wandern die Token zum Käufer.
+- **Zahlungs-Wächter:** Nach dem Reservieren läuft ein Payment Window (in Blöcken). Der Wächter
+  verfolgt offene Reservierungen und zeigt die verbleibenden Blöcke an. Er warnt vor Ablauf.
+  **Er zahlt nie automatisch.** Abschließen ist immer eine bewusste Aktion des Nutzers.
+- Referenz für den Ablauf: die vorhandene Umsetzung der Website (`omni.js` für die Payloads,
+  `transaction.js` für die Zahlung mit Exodus-Output). Deren Txs dienen auch als Testfälle.
 - Teilzahlungen, Zahlung nach Ablauf (LTC weg, keine Token!) und Offers, die sich zwischen Accept
   und Zahlung ändern: im Dry-Run gezielt abfangen.
 - **Fertig, wenn:** ein kompletter Handel (Offer, Accept, Pay, Token kommen an) im Regtest zwischen
@@ -310,7 +321,7 @@ Konsens ist alles. Ein Indexer, der an einer Stelle abweicht, ist wertlos.
 | Thema | Risiko | Umgang |
 |---|---|---|
 | MWEB / HogEx (Litecoin 0.21) | 0.18-Nodes sehen MWEB-Daten nicht. Txs, die Peg-out-Outputs der HogEx ausgeben, könnten anders erscheinen. | Bei der Kandidatenerkennung alles ignorieren, was 0.18 nicht sieht. Gezielter Test mit Peg-out-Inputs. |
-| Adresstypen | Nur P2PKH/P2SH als Sender. Wer Token an `ltc1…` schickt, verliert sie praktisch. | Wallet lehnt Bech32-Empfänger ab. Prüfen, ob 0.18.1 den Sender bei P2SH-P2WPKH-Inputs (Daten im Witness) korrekt erkennt, bevor BIP49 freigegeben wird. |
+| Adresstypen | Nur P2PKH/P2SH als Sender. Wer Token an `ltc1…` schickt, verliert sie praktisch. | Wallet erzeugt nur `M…` und lehnt Bech32-Empfänger ab. P2SH-P2WPKH als Sender ist im Mainnet erprobt (LiteWorlds nutzt es), trotzdem in die Regtest-Gegenprobe aufnehmen. |
 | Verlorene Gebühren | Omni-ungültige Txs landen trotzdem in der Chain. | Pflicht-Dry-Run vor jedem Broadcast, Pending zählt mit. |
 | DEx-Zahlung | Zu spät, zu wenig oder an den falschen Seller gezahlt → LTC weg. | Zahlungs-Wächter, Betrag und Window im Dry-Run prüfen, nur über `omni_senddexpay` zahlen. |
 | Schlüssel | Diebstahl, wenn die Wallet API offen im Netz hängt. | Wallet API nur lokal, Token-Auth, verschlüsselter Keystore, abschaltbar. |
@@ -321,9 +332,12 @@ Konsens ist alles. Ein Indexer, der an einer Stelle abweicht, ist wertlos.
 | `-txindex` am Node | Nicht jeder Node hat ihn. | v1 setzt ihn voraus, eigener Prevout-Cache in Phase 11. |
 | Wartung OmniLite-Upstream | Falls OmniLite doch neue Features aktiviert. | Activations werden on-chain erkannt; unbekannte Features → Indexer stoppt mit klarer Meldung statt falsch weiterzurechnen. |
 
+**Entschieden**
+- Projektname: **OmniLite Standalone** (`omnilite-standalone`).
+- DEx: kein automatisches Zahlen. Abschließen ist immer manuell.
+- Neue Wallet-Adressen nur `M…` (BIP49, wie liteworlds.quest).
+
 **Offene Entscheidungen**
-- Name des Projekts/Binaries (Arbeitstitel `omnilite-indexer`, mit Wallet passt evtl. `omnilite-node` o. ä. besser).
-- Ob der DEx-Zahlungs-Wächter automatisch zahlen darf oder nur warnt (Standard: nur warnen).
 - Lizenz (OmniLite ist MIT; Portierung als MIT naheliegend).
 - GitHub-Remote: eigenes Repo oder unter einer Org.
 
