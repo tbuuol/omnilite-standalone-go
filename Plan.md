@@ -207,6 +207,9 @@ Zeile in OmniLite 0.18.1, aus der sie stammt.
 - Blöcke ab `GENESIS_BLOCK` lesen, Höhe und Hash in der DB speichern, Tip folgen (Polling oder ZMQ).
 - Reorg-Erkennung über `previousblockhash`, Rollback über das Undo-Journal (zunächst mit leerem State).
 - **Fertig, wenn:** Sync bis zum Tip läuft und ein simulierter Reorg im Regtest sauber zurückrollt.
+- **Stand:** umgesetzt. Reorgs (länger, kürzer, gleiche Höhe, unter den Startblock, tiefer als `undodepth`)
+  sind mit einer simulierten Chain getestet. Ein Lauf gegen einen echten `litecoind` (Mainnet-Sync,
+  Regtest-Reorg mit `invalidateblock`) steht noch aus.
 
 ### Phase 2 – Decoder
 - Kandidatenerkennung (Exodus-Output, Class-C-Marker), Class A/B/C, Sender und Referenz, Payload.

@@ -1,0 +1,6 @@
+/omnilite-standalone
+/omnilite-standalone.exe
+/dist/
+*.db
+*.db-wal
+*.db-shm
