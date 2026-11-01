@@ -216,6 +216,13 @@ Zeile in OmniLite 0.18.1, aus der sie stammt.
 - Ausgabe: Liste aller Omni-Kandidaten mit Typ/Version/Rohpayload.
 - **Fertig, wenn:** die Kandidatenliste für den gesamten Mainnet-Bereich exakt der Liste aus
   `omni_listblocktransactions` des Referenz-Nodes entspricht (gleiche Txids, gleiche Sender).
+- **Stand:** umgesetzt (`internal/omni`, `internal/indexer`). Klassenerkennung, Sender (Class C: erster
+  Input; A/B: größte Input-Summe, bei Gleichstand die kleinste Adresse wie `std::map`), Referenz,
+  Class-B-Entschleierung und Class-C-Payload sind aus `parseTransaction` portiert. Die strukturelle
+  Prüfung (`interpret_Transaction`) gehört schon dazu, weil OmniLite Txs mit kaputtem Payload gar nicht
+  erst speichert; sonst wäre die Liste nicht vergleichbar. Class-A-Txs ohne Daten werden als mögliche
+  DEx-Zahlung mit ihren Outputs gespeichert (für Phase 4). Getestet mit gebauten Txs; der Abgleich mit
+  `omni_listblocktransactions` steht aus, bis ein Referenz-Node läuft.
 
 ### Phase 3 – Basis-State
 - Simple Send, Send All, Restricted Send, Issuance (fixed/managed), Grant/Revoke, Change Issuer,
@@ -331,6 +338,7 @@ Konsens ist alles. Ein Indexer, der an einer Stelle abweicht, ist wertlos.
 | Sender-Regel | Falscher erster Input → Tx gilt als von einer anderen Adresse. | Builder setzt die Input-Reihenfolge fest, Dry-Run prüft den erkannten Sender. |
 | Rundung / Überlauf | Crowdsale- und STO-Mathe nutzt 128-Bit-Zwischenwerte. | `math/big` bzw. `uint128` mit Tests aus `uint256_extensions.h`. |
 | Bugs in 0.18.1 | Referenz-Fehler gehören zum Konsens. | Nachbauen, dokumentieren, nicht „reparieren". |
+| Freeze an `M…`-Adressen | `HashToAddress` kennt nur die Versionsbytes 48 (`L`) und 5 (alte `3…`-Form), nicht 50 (`M`). Ein Freeze-/Unfreeze-Payload, das wie `omni_sendfreeze` die `M`-Version einträgt, ist strukturell ungültig. | Decoder bildet das nach. Wallet (Phase 8) schreibt für P2SH-Ziele das Versionsbyte 5, sonst geht die Gebühr verloren. Vorher im Regtest gegen 0.18.1 bestätigen. |
 | Iteration in `std::map` | Reihenfolge-abhängige Logik (STO-Verteilung, Consensus-Hash) folgt sortierten Keys. | Überall explizit sortieren. |
 | `-txindex` am Node | Nicht jeder Node hat ihn. | v1 setzt ihn voraus, eigener Prevout-Cache in Phase 11. |
 | Wartung OmniLite-Upstream | Falls OmniLite doch neue Features aktiviert. | Activations werden on-chain erkannt; unbekannte Features → Indexer stoppt mit klarer Meldung statt falsch weiterzurechnen. |

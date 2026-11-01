@@ -3,8 +3,9 @@
 Eigenständiger OmniLite-Indexer (und später Wallet), der gegen jeden aktuellen `litecoind`
 läuft, statt an einen gepatchten Litecoin Core gebunden zu sein. Details und Phasen: [Plan.md](Plan.md).
 
-**Stand:** Phase 0 und 1. Der Indexer folgt der Chain ab dem Omni-Genesis-Block und behandelt
-Reorgs. Omni-Transaktionen werden noch nicht dekodiert.
+**Stand:** Phase 0 bis 2. Der Indexer folgt der Chain ab dem Omni-Genesis-Block, behandelt Reorgs
+und dekodiert Omni-Transaktionen (Class A/B/C, Sender, Referenz, Payload). Balances und Properties
+werden noch nicht berechnet. Datenbanken aus Phase 1 müssen gelöscht und neu aufgebaut werden.
 
 ## Voraussetzungen
 

@@ -13,6 +13,8 @@ import (
 	"syscall"
 
 	"github.com/tbuuol/omnilite-standalone/internal/config"
+	"github.com/tbuuol/omnilite-standalone/internal/indexer"
+	"github.com/tbuuol/omnilite-standalone/internal/omni"
 	"github.com/tbuuol/omnilite-standalone/internal/rpc"
 	"github.com/tbuuol/omnilite-standalone/internal/store"
 	"github.com/tbuuol/omnilite-standalone/internal/syncer"
@@ -64,7 +66,11 @@ func run(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("node runs chain %q, configured network is %q", info.Chain, cfg.Chain.Name)
 	}
 	if enabled, _, err := client.TxIndex(ctx); err == nil && !enabled {
-		slog.Warn("node runs without -txindex; Omni transactions cannot be decoded without it (needed from phase 2)")
+		return fmt.Errorf("node runs without -txindex; restart litecoind with -txindex=1")
+	}
+	dec, err := omni.NewDecoder(&cfg.Chain)
+	if err != nil {
+		return err
 	}
 
 	st, err := store.Open(cfg.DBPath(), cfg.Chain.Name, cfg.UndoDepth)
@@ -77,7 +83,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	s := &syncer.Syncer{
 		Src:   client,
 		Store: st,
-		Proc:  syncer.NopProcessor{},
+		Proc:  &indexer.Indexer{Node: client, Dec: dec, Log: slog.Default()},
 		Start: cfg.Chain.OmniGenesis,
 		Poll:  cfg.PollInterval,
 		Log:   slog.Default(),

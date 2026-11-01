@@ -17,7 +17,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 1
+// schemaVersion changes whenever the stored data changes meaning, also when
+// the processor starts writing new records: older databases must be rebuilt.
+// 2: Omni transaction records (phase 2).
+const schemaVersion = 2
 
 const schema = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -106,7 +109,7 @@ func (s *Store) init(network string) error {
 		case err != nil:
 			return err
 		case have != want:
-			return fmt.Errorf("database has %s %q, expected %q", key, have, want)
+			return fmt.Errorf("database has %s %q, expected %q; delete it to rebuild", key, have, want)
 		}
 	}
 	return nil
