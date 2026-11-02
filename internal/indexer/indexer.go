@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"github.com/tbuuol/omnilite-standalone/internal/omni"
 	"github.com/tbuuol/omnilite-standalone/internal/rpc"
@@ -25,6 +26,8 @@ const (
 	// NsBlockTx maps BlockTxKey(height, index) to the txid, giving the
 	// processing order.
 	NsBlockTx = "blocktx"
+	// NsCount holds the number of recorded transactions.
+	NsCount = "count"
 )
 
 // BlockTxKey orders transactions by height and position in the block.
@@ -115,30 +118,26 @@ func (ix *Indexer) ConnectBlock(ctx context.Context, tx *store.BlockTx, hdr *rpc
 			continue
 		}
 		rec.Block, rec.Index, rec.Time = blk.Height, idx, blk.Time
-		v, err := json.Marshal(rec)
-		if err != nil {
-			return err
-		}
-		if err := tx.Put(NsTx, rec.Txid, v); err != nil {
-			return err
-		}
-		if err := tx.Put(NsBlockTx, BlockTxKey(blk.Height, idx), []byte(rec.Txid)); err != nil {
-			return err
-		}
-		if ix.Log != nil {
-			ix.Log.Debug("omni transaction", "block", blk.Height, "txid", rec.Txid, "kind", rec.Kind, "type", rec.Type, "sender", rec.Sender)
-		}
 		if msg == nil {
-			if _, err := st.ApplyPayment(&state.Payment{Txid: rec.Txid, Block: blk.Height, Sender: rec.Sender, Outputs: rec.Payments}); err != nil {
+			// OmniLite records a payment only when it bought tokens.
+			res, err := st.ApplyPayment(&state.Payment{Txid: rec.Txid, Block: blk.Height, Sender: rec.Sender, Outputs: rec.Payments})
+			if err != nil {
 				return err
 			}
-			continue
-		}
-		if _, err := st.Apply(&state.Tx{
+			if res == nil {
+				continue
+			}
+		} else if _, err := st.Apply(&state.Tx{
 			Txid: rec.Txid, Block: blk.Height, Index: idx, BlockHash: blk.Hash, BlockTime: blk.Time,
 			Sender: rec.Sender, Fee: rec.Fee, Msg: msg,
 		}); err != nil {
 			return err
+		}
+		if err := ix.record(tx, rec); err != nil {
+			return err
+		}
+		if ix.Log != nil {
+			ix.Log.Debug("omni transaction", "block", blk.Height, "txid", rec.Txid, "kind", rec.Kind, "type", rec.Type, "sender", rec.Sender)
 		}
 	}
 	if err := st.EndBlock(blk.Height, blk.Time); err != nil {
@@ -152,6 +151,37 @@ func (ix *Indexer) ConnectBlock(ctx context.Context, tx *store.BlockTx, hdr *rpc
 		ix.Log.Info("consensus hash", "block", blk.Height, "hash", h)
 	}
 	return nil
+}
+
+// record stores a transaction in the transaction list (CMPTxList) and
+// counts it.
+func (ix *Indexer) record(tx *store.BlockTx, rec *Record) error {
+	v, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	if err := tx.Put(NsTx, rec.Txid, v); err != nil {
+		return err
+	}
+	if err := tx.Put(NsBlockTx, BlockTxKey(rec.Block, rec.Index), []byte(rec.Txid)); err != nil {
+		return err
+	}
+	n, err := TxCount(tx)
+	if err != nil {
+		return err
+	}
+	return tx.Put(NsCount, "total", strconv.AppendInt(nil, n+1, 10))
+}
+
+// TxCount returns the number of recorded transactions.
+func TxCount(kv interface {
+	Get(ns, key string) ([]byte, bool, error)
+}) (int64, error) {
+	v, ok, err := kv.Get(NsCount, "total")
+	if err != nil || !ok {
+		return 0, err
+	}
+	return strconv.ParseInt(string(v), 10, 64)
 }
 
 // decode parses one marked transaction. It returns nil for transactions

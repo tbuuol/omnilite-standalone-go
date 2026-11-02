@@ -41,6 +41,14 @@ type Config struct {
 	ActivationAllowSenders []string
 	AlertAllowSenders      []string
 
+	// API serves the omni_* JSON-RPC calls on APIBind:APIPort. Without
+	// APIPassword a random password is written to APICookieFile().
+	API         bool
+	APIBind     string
+	APIPort     int
+	APIUser     string
+	APIPassword string
+
 	// ConsensusHashEvery logs the consensus hash every n blocks (0: off), to
 	// compare with OmniLite's -omnishowblockconsensushash.
 	ConsensusHashEvery int64
@@ -56,6 +64,11 @@ func (c *Config) RPCURL() string {
 // DBPath returns the database file for the configured network.
 func (c *Config) DBPath() string {
 	return filepath.Join(c.DataDir, c.Chain.Name, "index.db")
+}
+
+// APICookieFile is where the generated API password is written.
+func (c *Config) APICookieFile() string {
+	return filepath.Join(c.DataDir, c.Chain.Name, ".cookie")
 }
 
 // Credentials returns user and password, reading the cookie file when no
@@ -86,7 +99,7 @@ func Load(args []string) (*Config, error) {
 	datadir := flags.String("datadir", defaultDataDir(), "data directory")
 	check := flags.Bool("check", false, "check the node connection and exit")
 	set := map[string]*string{}
-	for _, k := range []string{"network", "rpcconnect", "rpcport", "rpcuser", "rpcpassword", "rpccookiefile", "pollinterval", "undodepth", "omniactivationallowsender", "omnialertallowsender", "consensushash"} {
+	for _, k := range []string{"network", "rpcconnect", "rpcport", "rpcuser", "rpcpassword", "rpccookiefile", "pollinterval", "undodepth", "omniactivationallowsender", "omnialertallowsender", "consensushash", "api", "apibind", "apiport", "apiuser", "apipassword"} {
 		set[k] = flags.String(k, "", "see "+FileName)
 	}
 	if err := flags.Parse(args); err != nil {
@@ -147,6 +160,18 @@ func Load(args []string) (*Config, error) {
 	}
 	c.ActivationAllowSenders = splitList(values["omniactivationallowsender"])
 	c.AlertAllowSenders = splitList(values["omnialertallowsender"])
+	c.API = values["api"] != "0"
+	c.APIBind = "127.0.0.1"
+	if v := values["apibind"]; v != "" {
+		c.APIBind = v
+	}
+	c.APIPort = params.RPCPort + 100
+	if v := values["apiport"]; v != "" {
+		if c.APIPort, err = strconv.Atoi(v); err != nil {
+			return nil, fmt.Errorf("apiport: %w", err)
+		}
+	}
+	c.APIUser, c.APIPassword = values["apiuser"], values["apipassword"]
 	if v := values["consensushash"]; v != "" {
 		if c.ConsensusHashEvery, err = strconv.ParseInt(v, 10, 64); err != nil || c.ConsensusHashEvery < 0 {
 			return nil, fmt.Errorf("consensushash: want a block count >= 0, got %q", v)

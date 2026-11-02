@@ -22,7 +22,8 @@ import (
 // 2: Omni transaction records (phase 2).
 // 3: balances, properties, activations and alerts (phase 3).
 // 4: crowdsales, STO, DEx, freezing and NFTs (phase 4).
-const schemaVersion = 4
+// 5: valid DEx payments only, transaction counter, crowdsale purchases in results.
+const schemaVersion = 5
 
 const schema = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -422,3 +423,35 @@ func (v *View) Get(ns, key string) ([]byte, bool, error) { return v.s.Get(v.ctx,
 func (v *View) Scan(ns, prefix string) ([]KV, error)     { return v.s.Scan(v.ctx, ns, prefix) }
 func (v *View) Put(string, string, []byte) error         { return errReadOnly }
 func (v *View) Delete(string, string) error              { return errReadOnly }
+
+// Snapshot is a read-only view inside one SQLite read transaction, so a
+// query sees a single block's state even while the syncer writes.
+type Snapshot struct {
+	ctx context.Context
+	tx  *sql.Tx
+}
+
+// Read runs fn on a consistent snapshot of the committed state.
+func (s *Store) Read(ctx context.Context, fn func(*Snapshot) error) error {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	return fn(&Snapshot{ctx: ctx, tx: tx})
+}
+
+func (v *Snapshot) Get(ns, key string) ([]byte, bool, error) { return get(v.ctx, v.tx, ns, key) }
+func (v *Snapshot) Scan(ns, prefix string) ([]KV, error)     { return scan(v.ctx, v.tx, ns, prefix) }
+func (v *Snapshot) Put(string, string, []byte) error         { return errReadOnly }
+func (v *Snapshot) Delete(string, string) error              { return errReadOnly }
+
+// Tip returns the highest block of the snapshot, or nil.
+func (v *Snapshot) Tip() (*Block, error) {
+	return scanBlock(v.tx.QueryRowContext(v.ctx, `SELECT height, hash, prev_hash, time FROM blocks ORDER BY height DESC LIMIT 1`))
+}
+
+// BlockAt returns the block at height, or nil.
+func (v *Snapshot) BlockAt(height int64) (*Block, error) {
+	return scanBlock(v.tx.QueryRowContext(v.ctx, `SELECT height, hash, prev_hash, time FROM blocks WHERE height = ?`, height))
+}

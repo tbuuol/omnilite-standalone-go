@@ -59,6 +59,10 @@ type Result struct {
 	// non-fungible property.
 	GrantStart int64 `json:"grantstart,omitempty"`
 	GrantEnd   int64 `json:"grantend,omitempty"`
+	// Crowd* describe a crowdsale purchase made by a simple send.
+	CrowdProperty uint32 `json:"crowdproperty,omitempty"`
+	CrowdTokens   int64  `json:"crowdtokens,omitempty"`
+	CrowdIssuer   int64  `json:"crowdissuer,omitempty"`
 	// Payments lists the DEx purchases of a payment transaction.
 	Payments []Purchase `json:"payments,omitempty"`
 }
@@ -87,7 +91,7 @@ func (s *State) apply(t *Tx, res *Result) (int, error) {
 	}
 	switch m.Type {
 	case omni.TypeSimpleSend:
-		return s.simpleSend(t)
+		return s.simpleSend(t, res)
 	case omni.TypeSendAll:
 		return s.sendAll(t, res)
 	case omni.TypeCreatePropertyFixed:
@@ -138,7 +142,7 @@ func (s *State) apply(t *Tx, res *Result) (int, error) {
 func validAmount(v uint64) bool { return v > 0 && v <= math.MaxInt64 }
 
 // logicMath_SimpleSend.
-func (s *State) simpleSend(t *Tx) (int, error) {
+func (s *State) simpleSend(t *Tx, res *Result) (int, error) {
 	m := t.Msg
 	if ok, err := s.typeAllowed(t.Block, m.Property, m.Type, m.Version); err != nil || !ok {
 		return pktErrorSend - 22, err
@@ -163,7 +167,7 @@ func (s *State) simpleSend(t *Tx) (int, error) {
 	if err := s.mustUpdate(m.Receiver, m.Property, amount, Balance); err != nil {
 		return 0, err
 	}
-	return 0, s.crowdsaleParticipation(t)
+	return 0, s.crowdsaleParticipation(t, res)
 }
 
 // logicMath_SendAll. The ecosystem byte doubles as property for the checks.

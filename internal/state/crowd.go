@@ -238,7 +238,7 @@ func (s *State) missedBonus(p *Property, c *Crowdsale) (int64, error) {
 
 // crowdsaleParticipation mirrors logicHelper_CrowdsaleParticipation after
 // a simple send. Its return code does not change the send's result.
-func (s *State) crowdsaleParticipation(t *Tx) error {
+func (s *State) crowdsaleParticipation(t *Tx, res *Result) error {
 	m := t.Msg
 	c, err := s.Crowdsale(m.Receiver)
 	if err != nil || c == nil || c.PropertyDesired != m.Property {
@@ -261,6 +261,7 @@ func (s *State) crowdsaleParticipation(t *Tx) error {
 	c.UserCreated += user
 	c.IssuerCreated += issuer
 	c.Purchases = insertHistory(c.Purchases, HistoryEntry{Txid: t.Txid, Data: []int64{int64(m.Amount), t.BlockTime, user, issuer}})
+	res.CrowdProperty, res.CrowdTokens, res.CrowdIssuer = c.PropertyID, user, issuer
 	if user > 0 {
 		if err := s.mustUpdate(t.Sender, c.PropertyID, user, Balance); err != nil {
 			return err

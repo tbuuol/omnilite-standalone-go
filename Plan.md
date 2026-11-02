@@ -272,6 +272,19 @@ Zeile in OmniLite 0.18.1, aus der sie stammt.
   - Antwortformat byte-kompatibel (Feldnamen, Strings für Beträge, Reihenfolge).
 - Optional REST (`/address/{addr}`, `/property/{id}`, `/tx/{txid}`) für das Explorer-Frontend.
 - **Fertig, wenn:** die Website mit dem Indexer statt `omnilitecored` funktioniert.
+- **Stand:** umgesetzt (`internal/api`): JSON-RPC-Server (Basic Auth, Batch, HTTP-Statuscodes wie Litecoin Core)
+  mit `omni_getinfo`, `getbalance`, `getallbalancesforid`, `getallbalancesforaddress`, `getproperty`,
+  `listproperties`, `getcrowdsale`, `getactivecrowdsales`, `getgrants`, `getactivedexsells`,
+  `listblocktransactions`, `listblockstransactions`, `gettransaction`, `getsto`, `getactivations`,
+  `getcurrentconsensushash`, `getnonfungibletokens`, `getnonfungibletokendata`, `getnonfungibletokenranges`
+  und `createpayload_dexsell`. Feldreihenfolge, Zahlenformate und `invalidreason`-Texte (aus `errors.h`)
+  wie OmniLite. Lesende Litecoin-Aufrufe (`getrawtransaction`, `getblock`, …) werden an `litecoind`
+  durchgereicht, damit die Website nur Host/Port/Zugang tauschen muss. Ohne `apipassword` wird ein
+  Cookie geschrieben. Abweichungen: `omni_getallbalancesforid` sortiert nach Adresse (OmniLite: zufällige
+  Reihenfolge), unbekannte Txids melden „No Omni Layer Protocol transaction“ statt „No information
+  available about transaction“, `omni_getnonfungibletokendata` liefert höchstens 100 000 Tokens pro Aufruf,
+  `ismine` ist immer false (keine Wallet). Unbestätigte Txs folgen mit Phase 6. REST ist offen.
+  Getestet mit eigenen Fixtures; der Test der Website gegen den laufenden Indexer steht aus.
 
 ### Phase 6 – Mempool und Pending
 - Mempool über `getrawmempool` und ZMQ (`rawtx`) verfolgen, Omni-Kandidaten dekodieren.

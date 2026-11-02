@@ -140,17 +140,13 @@ func TestConnectBlock(t *testing.T) {
 		c1.Fee != 51_000_000-50_995_460 || c1.Payload != send || c1.Index != 1 || c1.Time != 1650000000 {
 		t.Fatalf("c1 = %+v", c1)
 	}
-	d1 := get("d1")
-	if d1 == nil || d1.Kind != KindDExPayment || d1.Sender != addr(a) || len(d1.Payments) != 2 ||
-		d1.Payments[0].Address != addr(seller) || d1.Payments[0].Value != 25_000_000 {
-		t.Fatalf("d1 = %+v", d1)
-	}
-	for _, id := range []string{"cb", "n1", "x1"} {
+	// d1 looks like a DEx payment but pays no accept, so OmniLite drops it.
+	for _, id := range []string{"cb", "n1", "x1", "d1"} {
 		if rec := get(id); rec != nil {
 			t.Errorf("%s should not be recorded: %+v", id, rec)
 		}
 	}
-	for idx, want := range map[int]string{1: "c1", 4: "d1"} {
+	for idx, want := range map[int]string{1: "c1"} {
 		v, ok, _ := st.Get(ctx, NsBlockTx, BlockTxKey(2010500, idx))
 		if !ok || string(v) != want {
 			t.Errorf("blocktx %d = %q, want %s", idx, v, want)
@@ -159,6 +155,9 @@ func TestConnectBlock(t *testing.T) {
 	// The state engine ran: a has no tokens, so the send is invalid.
 	if v, ok, _ := st.Get(ctx, state.NsResult, "c1"); !ok || !strings.Contains(string(v), `"code":-60025`) {
 		t.Errorf("result c1 = %s", v)
+	}
+	if n, _ := TxCount(st.View(ctx)); n != 1 {
+		t.Errorf("tx count = %d", n)
 	}
 	// p1 is fetched once; c1 is found in the block itself.
 	if node.calls != 1 {

@@ -4,14 +4,21 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
+	"time"
 
+	"github.com/tbuuol/omnilite-standalone/internal/api"
 	"github.com/tbuuol/omnilite-standalone/internal/config"
 	"github.com/tbuuol/omnilite-standalone/internal/indexer"
 	"github.com/tbuuol/omnilite-standalone/internal/omni"
@@ -80,6 +87,12 @@ func run(ctx context.Context, cfg *config.Config) error {
 	}
 	defer st.Close()
 
+	if cfg.API {
+		if err := startAPI(ctx, cfg, client, st); err != nil {
+			return err
+		}
+	}
+
 	slog.Info("syncing", "network", cfg.Chain.Name, "node", cfg.RPCURL(), "db", cfg.DBPath(), "start", cfg.Chain.OmniGenesis)
 	s := &syncer.Syncer{
 		Src:   client,
@@ -93,6 +106,49 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Log:   slog.Default(),
 	}
 	return s.Run(ctx)
+}
+
+// startAPI serves the JSON-RPC API until ctx ends.
+func startAPI(ctx context.Context, cfg *config.Config, client *rpc.Client, st *store.Store) error {
+	user, pass := cfg.APIUser, cfg.APIPassword
+	if pass == "" {
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			return err
+		}
+		user, pass = "__cookie__", hex.EncodeToString(b)
+		if err := os.WriteFile(cfg.APICookieFile(), []byte(user+":"+pass), 0o600); err != nil {
+			return fmt.Errorf("write api cookie: %w", err)
+		}
+	}
+	if info, err := client.GetNetworkInfo(ctx); err == nil {
+		v := info.Version
+		api.NodeVersion = fmt.Sprintf("%d.%d.%d", v/1000000, v/10000%100, v/100%100)
+		if v%100 != 0 {
+			api.NodeVersion += fmt.Sprintf(".%d", v%100)
+		}
+	}
+
+	addr := net.JoinHostPort(cfg.APIBind, strconv.Itoa(cfg.APIPort))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("api: %w", err)
+	}
+	srv := &http.Server{
+		Handler:           &api.Server{Store: st, Params: &cfg.Chain, Node: client, User: user, Pass: pass, Log: slog.Default()},
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		<-ctx.Done()
+		srv.Close()
+	}()
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("api stopped", "err", err)
+		}
+	}()
+	slog.Info("api listening", "addr", addr, "auth", map[bool]string{true: "cookie " + cfg.APICookieFile(), false: "apiuser/apipassword"}[cfg.APIPassword == ""])
+	return nil
 }
 
 // runCheck prints the node and database status and reports whether

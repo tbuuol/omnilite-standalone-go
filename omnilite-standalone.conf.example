@@ -30,3 +30,12 @@ rpcconnect=127.0.0.1
 # Log the consensus hash every n blocks (0: off). Compare with OmniLite's
 # omni_getcurrentconsensushash or -omnishowblockconsensushash.
 #consensushash=10000
+
+# JSON-RPC API with the omni_* calls of omnilitecored (api=0 turns it off).
+# Without apipassword a random one is written to <datadir>/<network>/.cookie
+# as "__cookie__:<password>". Default port: rpcport + 100 (9432 on mainnet).
+#api=1
+#apibind=127.0.0.1
+#apiport=9432
+#apiuser=omni
+#apipassword=change-me
