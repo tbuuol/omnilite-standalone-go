@@ -253,3 +253,11 @@ func (s *State) AddressNFTs(id uint32, addr string) (map[uint32][]NFTRange, []ui
 	}
 	return res, order, nil
 }
+
+// NFTOwner mirrors GetNonFungibleTokenOwner.
+func (s *State) NFTOwner(id uint32, token int64) (string, error) { return s.nftOwner(id, token) }
+
+// NFTContiguous mirrors IsRangeContiguous.
+func (s *State) NFTContiguous(id uint32, start, end int64) (bool, error) {
+	return s.nftContiguous(id, start, end)
+}

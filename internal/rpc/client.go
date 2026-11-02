@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync/atomic"
 	"time"
 )
@@ -57,6 +58,15 @@ func New(url, user, pass string) *Client {
 		pass: pass,
 		http: &http.Client{Timeout: 2 * time.Minute},
 	}
+}
+
+// ForWallet returns a client for the named wallet of a node with several
+// wallets, or c itself for an empty name.
+func (c *Client) ForWallet(name string) *Client {
+	if name == "" {
+		return c
+	}
+	return &Client{url: c.url + "/wallet/" + url.PathEscape(name), user: c.user, pass: c.pass, http: c.http}
 }
 
 // Call invokes method and decodes the result into result (which may be nil).

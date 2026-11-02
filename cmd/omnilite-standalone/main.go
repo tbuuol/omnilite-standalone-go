@@ -27,6 +27,7 @@ import (
 	"github.com/tbuuol/omnilite-standalone/internal/state"
 	"github.com/tbuuol/omnilite-standalone/internal/store"
 	"github.com/tbuuol/omnilite-standalone/internal/syncer"
+	"github.com/tbuuol/omnilite-standalone/internal/wallet"
 )
 
 func main() {
@@ -93,8 +94,29 @@ func run(ctx context.Context, cfg *config.Config) error {
 	pool := &mempool.Pool{Node: client, Dec: &indexer.Indexer{Node: client, Dec: dec}, Poll: cfg.PollInterval, Log: slog.Default()}
 	go pool.Run(ctx)
 
+	opts := state.Options{
+		ActivationAllowSenders: cfg.ActivationAllowSenders,
+		AlertAllowSenders:      cfg.AlertAllowSenders,
+	}
+	var wal *wallet.Wallet
+	if cfg.Wallet {
+		node := client.ForWallet(cfg.WalletName)
+		var wi struct {
+			WalletName string `json:"walletname"`
+		}
+		if err := node.Call(ctx, "getwalletinfo", &wi); err != nil {
+			return fmt.Errorf("wallet=1, but the node's wallet is not available: %w", err)
+		}
+		wal = &wallet.Wallet{Node: node, Dec: &indexer.Indexer{Node: client, Dec: dec}, Store: st, Pool: pool,
+			Params: &cfg.Chain, State: opts, FallbackFee: cfg.FallbackFee, Log: slog.Default()}
+		slog.Info("sending enabled", "wallet", wi.WalletName)
+		if !cfg.API {
+			slog.Warn("wallet=1 has no effect with api=0")
+		}
+	}
+
 	if cfg.API {
-		if err := startAPI(ctx, cfg, client, st, pool); err != nil {
+		if err := startAPI(ctx, cfg, client, st, pool, wal); err != nil {
 			return err
 		}
 	}
@@ -103,10 +125,8 @@ func run(ctx context.Context, cfg *config.Config) error {
 	s := &syncer.Syncer{
 		Src:   client,
 		Store: st,
-		Proc: &indexer.Indexer{Node: client, Dec: dec, Log: slog.Default(), State: state.Options{
-			ActivationAllowSenders: cfg.ActivationAllowSenders,
-			AlertAllowSenders:      cfg.AlertAllowSenders,
-		}, HashEvery: cfg.ConsensusHashEvery, Confirmed: pool.Confirmed},
+		Proc: &indexer.Indexer{Node: client, Dec: dec, Log: slog.Default(), State: opts,
+			HashEvery: cfg.ConsensusHashEvery, Confirmed: pool.Confirmed},
 		Start: cfg.Chain.OmniGenesis,
 		Poll:  cfg.PollInterval,
 		Log:   slog.Default(),
@@ -115,7 +135,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 }
 
 // startAPI serves the JSON-RPC API until ctx ends.
-func startAPI(ctx context.Context, cfg *config.Config, client *rpc.Client, st *store.Store, pool *mempool.Pool) error {
+func startAPI(ctx context.Context, cfg *config.Config, client *rpc.Client, st *store.Store, pool *mempool.Pool, wal *wallet.Wallet) error {
 	user, pass := cfg.APIUser, cfg.APIPassword
 	if pass == "" {
 		b := make([]byte, 32)
@@ -141,7 +161,7 @@ func startAPI(ctx context.Context, cfg *config.Config, client *rpc.Client, st *s
 		return fmt.Errorf("api: %w", err)
 	}
 	srv := &http.Server{
-		Handler:           &api.Server{Store: st, Params: &cfg.Chain, Node: client, Pool: pool, User: user, Pass: pass, Log: slog.Default()},
+		Handler:           &api.Server{Store: st, Params: &cfg.Chain, Node: client, Pool: pool, Wallet: wal, User: user, Pass: pass, Log: slog.Default()},
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

@@ -17,6 +17,7 @@ import (
 	"github.com/tbuuol/omnilite-standalone/internal/chain"
 	"github.com/tbuuol/omnilite-standalone/internal/rpc"
 	"github.com/tbuuol/omnilite-standalone/internal/store"
+	"github.com/tbuuol/omnilite-standalone/internal/wallet"
 )
 
 // RPC error codes of Litecoin Core (src/rpc/protocol.h).
@@ -55,9 +56,11 @@ type Server struct {
 	Node   Node
 	// Pool, if set, provides unconfirmed transactions and pending debits.
 	Pool Pool
-	User string
-	Pass string
-	Log  *slog.Logger
+	// Wallet, if set, enables the omni_send* calls through the node's wallet.
+	Wallet *wallet.Wallet
+	User   string
+	Pass   string
+	Log    *slog.Logger
 }
 
 // passThrough lists the read-only node calls forwarded to litecoind.
@@ -169,6 +172,12 @@ func (s *Server) handle(ctx context.Context, req request) response {
 }
 
 func (s *Server) call(ctx context.Context, method string, params []json.RawMessage) (any, error) {
+	if h, ok := nodeMethods[method]; ok {
+		if walletMethods[method] && s.Wallet == nil {
+			return nil, errorf(codeMethodNotFound, "Method not found (sending is disabled, set wallet=1)")
+		}
+		return h(ctx, s, args(params))
+	}
 	if h, ok := methods[method]; ok {
 		var result any
 		err := s.Store.Read(ctx, func(snap *store.Snapshot) error {

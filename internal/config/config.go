@@ -49,6 +49,13 @@ type Config struct {
 	APIUser     string
 	APIPassword string
 
+	// Wallet enables omni_send* through the node's wallet (WalletName for a
+	// node with several wallets). FallbackFee is the fee rate in litoshi per
+	// kB when the node has no estimate.
+	Wallet      bool
+	WalletName  string
+	FallbackFee int64
+
 	// ConsensusHashEvery logs the consensus hash every n blocks (0: off), to
 	// compare with OmniLite's -omnishowblockconsensushash.
 	ConsensusHashEvery int64
@@ -99,7 +106,7 @@ func Load(args []string) (*Config, error) {
 	datadir := flags.String("datadir", defaultDataDir(), "data directory")
 	check := flags.Bool("check", false, "check the node connection and exit")
 	set := map[string]*string{}
-	for _, k := range []string{"network", "rpcconnect", "rpcport", "rpcuser", "rpcpassword", "rpccookiefile", "pollinterval", "undodepth", "omniactivationallowsender", "omnialertallowsender", "consensushash", "api", "apibind", "apiport", "apiuser", "apipassword"} {
+	for _, k := range []string{"network", "rpcconnect", "rpcport", "rpcuser", "rpcpassword", "rpccookiefile", "pollinterval", "undodepth", "omniactivationallowsender", "omnialertallowsender", "consensushash", "api", "apibind", "apiport", "apiuser", "apipassword", "wallet", "walletname", "fallbackfee"} {
 		set[k] = flags.String(k, "", "see "+FileName)
 	}
 	if err := flags.Parse(args); err != nil {
@@ -172,12 +179,30 @@ func Load(args []string) (*Config, error) {
 		}
 	}
 	c.APIUser, c.APIPassword = values["apiuser"], values["apipassword"]
+	c.Wallet = values["wallet"] == "1"
+	c.WalletName = values["walletname"]
+	c.FallbackFee = 10000 // 0.0001 LTC/kB
+	if v := values["fallbackfee"]; v != "" {
+		if c.FallbackFee, err = parseLTC(v); err != nil || c.FallbackFee <= 0 {
+			return nil, fmt.Errorf("fallbackfee: want an amount in LTC/kB, got %q", v)
+		}
+	}
 	if v := values["consensushash"]; v != "" {
 		if c.ConsensusHashEvery, err = strconv.ParseInt(v, 10, 64); err != nil || c.ConsensusHashEvery < 0 {
 			return nil, fmt.Errorf("consensushash: want a block count >= 0, got %q", v)
 		}
 	}
 	return c, nil
+}
+
+// parseLTC parses an amount like "0.0001" to litoshi.
+func parseLTC(v string) (int64, error) {
+	whole, frac, _ := strings.Cut(v, ".")
+	if whole == "" || len(frac) > 8 || strings.Trim(whole+frac, "0123456789") != "" {
+		return 0, errors.New("invalid amount")
+	}
+	frac += strings.Repeat("0", 8-len(frac))
+	return strconv.ParseInt(whole+frac, 10, 64)
 }
 
 // splitList splits a comma-separated list and drops empty entries.

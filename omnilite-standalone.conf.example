@@ -39,3 +39,12 @@ rpcconnect=127.0.0.1
 #apiport=9432
 #apiuser=omni
 #apipassword=change-me
+
+# Sending (omni_send, omni_sendall, ...) through the wallet of litecoind.
+# Off by default; keep it off when serving data to others, and never expose
+# the API to the network while it is on.
+#wallet=1
+# Name of the node wallet, if litecoind has more than one.
+#walletname=
+# Fee rate in LTC/kB when litecoind has no fee estimate (e.g. on regtest).
+#fallbackfee=0.0001

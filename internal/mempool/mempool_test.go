@@ -12,9 +12,17 @@ import (
 type fakeNode struct {
 	mempool []string
 	fetches int
+	// during runs inside GetRawMempool, after the list is taken.
+	during func()
 }
 
-func (n *fakeNode) GetRawMempool(context.Context) ([]string, error) { return n.mempool, nil }
+func (n *fakeNode) GetRawMempool(context.Context) ([]string, error) {
+	list := n.mempool
+	if n.during != nil {
+		n.during()
+	}
+	return list, nil
+}
 
 func (n *fakeNode) GetRawTransaction(_ context.Context, txid string) (*rpc.Tx, error) {
 	n.fetches++
@@ -96,5 +104,34 @@ func TestPending(t *testing.T) {
 	}
 	if p.Get("omniB") == nil || node.fetches != before+1 {
 		t.Fatalf("omniB after reorg: %v, fetches %d -> %d", p.Get("omniB"), before, node.fetches)
+	}
+}
+
+func TestSent(t *testing.T) {
+	ctx := context.Background()
+	node := &fakeNode{}
+	p := &Pool{Node: node, Dec: fakeDecoder{}}
+	sent := func(id string) {
+		p.Sent(&Entry{Record: &indexer.Record{Txid: id, Sender: "Lme"}, Msg: &omni.Message{}}, 3, 10)
+	}
+	sent("omniA")
+	// Sent while the mempool list was being fetched: kept.
+	node.during = func() { sent("omniB") }
+	if err := p.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	node.during = nil
+	if p.Get("omniA") != nil || p.Get("omniB") == nil || p.PendingDebit("Lme", 3) != 10 {
+		t.Fatalf("after refresh: A %v, B %v", p.Get("omniA"), p.Get("omniB"))
+	}
+	if own := p.Own(); len(own) != 1 || own[0].Record.Txid != "omniB" {
+		t.Fatalf("own = %v", own)
+	}
+	// Still missing on the next round: dropped.
+	if err := p.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if p.Get("omniB") != nil || len(p.Own()) != 0 {
+		t.Fatal("dropped transaction still pending")
 	}
 }

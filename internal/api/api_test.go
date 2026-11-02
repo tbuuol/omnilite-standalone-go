@@ -66,7 +66,14 @@ func offerPayload(id uint32, amount, desired uint64) []byte {
 type fakeNode struct{}
 
 func (fakeNode) Call(_ context.Context, method string, result any, params ...any) error {
-	raw := result.(*json.RawMessage)
+	raw, ok := result.(*json.RawMessage)
+	if !ok {
+		// A call made by the server itself.
+		if method == "getnetworkinfo" {
+			return json.Unmarshal([]byte(`{"relayfee":0.00001000}`), result)
+		}
+		return fmt.Errorf("unexpected call %s", method)
+	}
 	*raw = json.RawMessage(fmt.Sprintf(`{"method":%q,"params":%d}`, method, len(params)))
 	return nil
 }

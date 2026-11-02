@@ -36,11 +36,16 @@ type Entry struct {
 	Seen   time.Time
 }
 
-// pending is a debit registered with AddPending (CMPPending).
+// pending is a transaction this program sent, with its debit (CMPPending).
 type pending struct {
 	sender   string
 	property uint32
 	amount   int64
+	// round is the refresh round it was added in; seq orders the sends.
+	round uint64
+	seq   uint64
+	// entry is the decoded transaction, nil if only a debit was registered.
+	entry *Entry
 }
 
 type Pool struct {
@@ -55,6 +60,8 @@ type Pool struct {
 	// mempool transaction is fetched once.
 	seen    map[string]bool
 	pending map[string]pending
+	// round counts refreshes, seq counts pending entries.
+	round, seq uint64
 }
 
 func (p *Pool) init() {
@@ -81,6 +88,11 @@ func (p *Pool) Run(ctx context.Context) {
 
 // Refresh syncs the pool with the node's mempool once.
 func (p *Pool) Refresh(ctx context.Context) error {
+	// Transactions sent after this point may be missing from the list.
+	p.mu.Lock()
+	p.round++
+	round := p.round
+	p.mu.Unlock()
 	txids, err := p.Node.GetRawMempool(ctx)
 	if err != nil {
 		return err
@@ -134,18 +146,23 @@ func (p *Pool) Refresh(ctx context.Context) error {
 	}
 	// PendingCheck: forget everything that left the mempool.
 	for id := range p.seen {
-		if !current[id] {
+		if !current[id] && !p.addedIn(id, round) {
 			delete(p.seen, id)
 			delete(p.entries, id)
 			delete(p.pending, id)
 		}
 	}
 	for id := range p.pending {
-		if !current[id] {
+		if !current[id] && !p.addedIn(id, round) {
 			delete(p.pending, id)
 		}
 	}
 	return nil
+}
+
+func (p *Pool) addedIn(txid string, round uint64) bool {
+	d, ok := p.pending[txid]
+	return ok && d.round >= round
 }
 
 // Get returns an unconfirmed Omni transaction, or nil.
@@ -178,7 +195,38 @@ func (p *Pool) AddPending(txid, sender string, property uint32, amount int64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.init()
-	p.pending[txid] = pending{sender, property, amount}
+	p.pending[txid] = pending{sender: sender, property: property, amount: amount, round: p.round, seq: p.next()}
+}
+
+// Sent registers a transaction this program just broadcast: it is listed
+// at once, its debit counts, and dry-runs apply it before new transactions.
+func (p *Pool) Sent(e *Entry, property uint32, amount int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.init()
+	id := e.Record.Txid
+	p.entries[id] = e
+	p.seen[id] = true
+	p.pending[id] = pending{sender: e.Record.Sender, property: property, amount: amount, round: p.round, seq: p.next(), entry: e}
+}
+
+// Own returns the unconfirmed transactions sent by this program, oldest
+// first.
+func (p *Pool) Own() []*Entry {
+	p.mu.RLock()
+	var list []pending
+	for _, d := range p.pending {
+		if d.entry != nil {
+			list = append(list, d)
+		}
+	}
+	p.mu.RUnlock()
+	sort.Slice(list, func(i, j int) bool { return list[i].seq < list[j].seq })
+	res := make([]*Entry, len(list))
+	for i, d := range list {
+		res[i] = d.entry
+	}
+	return res
 }
 
 // Confirmed drops the pending debit of a transaction that made it into a
@@ -204,4 +252,9 @@ func (p *Pool) PendingDebit(addr string, property uint32) int64 {
 		}
 	}
 	return sum
+}
+
+func (p *Pool) next() uint64 {
+	p.seq++
+	return p.seq
 }

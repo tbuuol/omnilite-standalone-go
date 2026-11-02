@@ -5,9 +5,11 @@ Er verbindet sich per Standard-RPC mit einem beliebigen, aktuellen `litecoind`, 
 dekodiert Omni-Transaktionen selbst, berechnet den kompletten Omni-State (Balances, Properties,
 Crowdsales, DEx, NFTs, Freeze, Activations) und stellt ihn über eine API bereit.
 
-Darauf aufbauend ist er eine **vollwertige OmniLite-Wallet**: Er kann Token erstellen, senden und
-verwalten und am DEx handeln. Er baut die Transaktionen selbst, signiert sie und gibt sie über
-`sendrawtransaction` an den Node.
+Für Einzelanwender kann er außerdem **Omni-Transaktionen senden**: Token erstellen, senden und
+verwalten und am DEx handeln. Er baut die Omni-Transaktionen selbst und prüft sie gegen den eigenen
+State. Schlüssel, Signieren und Coins bleiben bei der **Wallet des `litecoind`**. Eine eigene Wallet hat
+OmniLite Standalone nicht. Als Provider (z. B. für eine Website) läuft er als reiner Indexer und liefert
+nur Daten aus dem Omni-Index.
 
 **Kernidee:** Die Omni-Logik lebt außerhalb von Core. Core-Updates (0.21, MWEB, alles danach) betreffen
 uns nur noch, wenn sich die Standard-RPC-Schnittstelle ändert – und die ist sehr stabil.
@@ -23,15 +25,13 @@ uns nur noch, wenn sich die Standard-RPC-Schnittstelle ändert – und die ist s
 - `omni_*`-kompatible JSON-RPC-Schnittstelle (Teilmenge), damit bestehende Tools und die
   LiteWorlds-Website nur den Endpoint tauschen müssen.
 - Ein Binary, einfache Konfiguration, eingebettete Datenbank.
-- Wallet: alle Omni-Aktionen, die `omnilitecored` kann (Send, Issuance, Grant/Revoke, Crowdsale,
-  STO, Freeze, NFT, DEx Sell/Accept/Pay), mit eigener Schlüsselverwaltung. Die Litecoin-Wallet des
-  Nodes wird dafür nicht gebraucht.
+- Senden: alle Omni-Aktionen, die `omnilitecored` kann (Send, Issuance, Grant/Revoke, Crowdsale,
+  STO, Freeze, NFT, DEx Sell/Accept/Pay), über die Wallet des Nodes (`wallet=1`).
 - Keine verbrannten Gebühren: Jede Omni-Tx wird vor dem Senden gegen den eigenen State geprüft.
 
 **Nicht-Ziele (vorerst)**
 - Keine eigene P2P-Anbindung (nur RPC).
-- Keine allgemeine Litecoin-Wallet. LTC wird nur verwaltet, soweit Omni-Txs es brauchen
-  (Gebühren, Dust-Outputs, DEx-Zahlungen).
+- Keine eigene Wallet: keine Schlüssel, kein Seed, kein Keystore. Das macht die Wallet des Nodes.
 - Keine Protokolländerungen. Wir bilden 0.18.1 nach, Fehler eingeschlossen.
 
 ---
@@ -83,21 +83,21 @@ Da es keine Mainnet-Checkpoints gibt, müssen wir die Referenzwerte selbst erzeu
 ```
  litecoind (aktuell, -txindex)                        Clients
         │  JSON-RPC: getblockhash, getblock(v2),        (Website, Explorer, Tools)
-        │  getrawtransaction, getrawmempool,                   ▲
-        │  estimatesmartfee, sendrawtransaction                │ Public API (lesen)
-        ▼                                                      │ Wallet API (privat, Auth)
+        │  getrawtransaction, getrawmempool                    ▲
+        │                                                      │ JSON-RPC (omni_*)
+        ▼                                                      │ Senden nur mit wallet=1
  ┌───────────────┐   ┌─────────────┐   ┌──────────────┐   ┌────┴─────┐
  │ Block Fetcher │──▶│ Tx Decoder  │──▶│ State Engine │──▶│   API    │
  │ + Mempool     │   │ Class A/B/C │   │ (Konsens)    │   └────┬─────┘
  │ + Reorgs      │   │ Sender/Ref  │   │ Tally, SP,   │        │
- └───────▲───────┘   │ Payload     │   │ DEx, STO,    │   ┌────▼─────────────┐
-         │           └─────────────┘   │ NFT ...      │◀──│ Wallet           │
-         │                             └──────┬───────┘   │ Keystore, UTXOs, │
-         │       sendrawtransaction           │           │ Tx-Builder,      │
-         └────────────────────────────────────┼───────────│ Dry-Run, Signer  │
-                                              ▼           └──────────────────┘
-                                       SQLite (eingebettet)
-                                       State + Tx-Liste + Undo-Journal + Wallet
+ └───────────────┘   │ Payload     │   │ DEx, STO,    │   ┌────▼─────────────┐
+                     └─────────────┘   │ NFT ...      │◀──│ Tx-Builder       │
+                                       └──────┬───────┘   │ + Dry-Run        │
+                                              │           └────┬─────────────┘
+                                              ▼                │ listunspent, getaddressinfo,
+                                       SQLite (eingebettet)    │ signrawtransactionwithwallet,
+                                       State + Tx-Liste +      ▼ sendrawtransaction
+                                       Undo-Journal        Wallet des litecoind
 ```
 
 **Sprache: Go.** Gründe: ein statisches Binary für Windows und Linux, gute Unterstützung für
@@ -114,59 +114,49 @@ Eintrag ins Undo-Journal (`block_height`, Tabelle, Schlüssel, alter Wert). Bei 
 blockweise bis zum gemeinsamen Vorfahren zurück. Undo-Daten älter als N Blöcke (Default 100) werden
 gelöscht.
 
-### Wallet-Teil
+### Senden über die Node-Wallet
 
-Der Wallet-Teil sitzt auf der State Engine. Er weiß damit immer genau, welche Token eine Adresse hat
-und welche davon in DEx-Offers oder Accepts reserviert sind.
+OmniLite Standalone hat **keine eigene Wallet**. Wer senden will, nutzt die Wallet seines `litecoind`.
+Sie hält die Schlüssel, kennt die Coins, signiert und verschlüsselt (`walletpassphrase`). Das ist
+sauberer, als neben der vorhandenen Wallet eine zweite anzuhängen.
 
-**Schlüssel**
-- Eigene HD-Wallet mit BIP39-Seed. **Neue Adressen sind ausschließlich `M…`** (BIP49 P2SH-P2WPKH,
-  Pfad `m/49'/2'/0'/0/i`). Das ist der Standard-Adresstyp von OmniLite 0.18.1 (`DEFAULT_ADDRESS_TYPE =
-  P2SH_SEGWIT`) und genau das, was die LiteWorlds-Wallet erzeugt (`blockchain.js`). Derselbe Seed ergibt
-  also dieselben Adressen wie auf liteworlds.quest.
-- Kein Bech32 (OmniLite akzeptiert das nicht als Sender). `L…` (P2PKH) wird **nicht** neu erzeugt.
-- Import einzelner WIF-Keys. Auch alte `L…`-Adressen lassen sich importieren, damit Token darauf nicht
-  festsitzen. Ziel ist, sie auf `M…` umzuziehen.
-- Reine Watch-only-Adressen.
-- Das Lesen bleibt davon unberührt: Der Indexer verarbeitet natürlich alle Adresstypen, die OmniLite kennt.
-- Keystore verschlüsselt (Argon2id + AES-256-GCM), Entsperren mit Passphrase, automatisches Sperren.
-- Austauschbare Signer:
-  1. interner Keystore (Standard),
-  2. PSBT-Export und -Import für externe Wallets oder Hardware-Wallets, der Indexer baut dann nur,
-  3. optional die Wallet des `litecoind` (`signrawtransactionwithwallet`).
+**Adressen**
+- Neue Adressen kommen von der Node: `getnewaddress "" p2sh-segwit` ergibt `M…` (P2SH-P2WPKH), den
+  Standard-Adresstyp von OmniLite 0.18.1 und der LiteWorlds-Wallet.
+- Kein Bech32 (OmniLite akzeptiert das nicht als Sender oder Referenz). Der Builder nimmt nur `L…` und
+  `M…` an.
+- Schlüssel von liteworlds.quest oder alte `L…`-Adressen werden in die Node importiert
+  (`importprivkey`, bei Descriptor-Wallets `importdescriptors` mit `sh(wpkh(<WIF>))` bzw. `pkh(<WIF>)`).
 
-**UTXOs**
-- Der Indexer sieht ohnehin jeden Block und den Mempool. Er führt die UTXOs der eigenen Adressen
-  selbst, ein Address-Index am Node ist nicht nötig.
-- Beim Import einer Adresse, die schon benutzt wurde: Startbestand über `scantxoutset` (Standard-RPC),
-  ab dann laufend aus den Blöcken.
-- Coin-Control: bestimmte UTXOs sperren (z. B. für laufende DEx-Zahlungen).
-
-**Tx-Builder** (Port von `createpayload.cpp`, `encoding.cpp`, `wallettxbuilder.cpp`)
+**Tx-Builder** (Port von `wallettxbuilder.cpp`, `walletutils.cpp`, `encoding.cpp`, `createtx.cpp`)
 1. Payload bauen (rein, ohne Node).
-2. Encoding wählen: Class C (OP_RETURN mit `omni`-Marker), wenn Marker und Payload in die
-   Datacarrier-Grenze passen (80 Byte). Sonst Class B (verschleiertes Bare-Multisig plus Exodus-Output).
-3. Inputs wählen. **Der erste Input muss vom Sender kommen** (Class-C-Regel). Bei Class B muss der
-   Sender die größte Input-Summe stellen, deshalb nur Inputs der Sender-Adresse.
-4. Outputs: Referenz-Output (Dust) an den Empfänger, falls der Typ einen braucht, Change an den Sender
-   **nach** dem Referenz-Output (wegen der Change-Regel bei der Referenz-Bestimmung).
-5. Gebühr über `estimatesmartfee`, Dust-Grenzen wie in Litecoin Core.
-6. **Dry-Run:** Die fertige Tx läuft durch den eigenen Decoder und die State Engine (auf einer Kopie
-   des aktuellen States inklusive Pending). Ist sie Omni-ungültig (zu wenig Token, falsche Property,
-   Crowdsale geschlossen …), wird **nicht** gesendet. Die Chain würde die LTC-Gebühr trotzdem nehmen.
-7. Signieren, `sendrawtransaction`, als Pending speichern.
+2. Encoding wählen: Class C (OP_RETURN mit `omni`-Marker), wenn Payload, Marker, OP_RETURN und zwei
+   Push-Bytes in 83 Byte passen (Payload ≤ 76 Byte). Sonst Class B (verschleiertes Bare-Multisig mit dem
+   Schlüssel des Senders, dahinter der Exodus-Output).
+3. Inputs: nur Coins der Sender-Adresse aus `listunspent` (sicher, ausgebbar, über der
+   Wirtschaftlichkeitsgrenze), bis die Gebühr für 20 kB plus Referenzbetrag gedeckt ist (`SelectCoins`).
+   So ist der erste Input vom Sender (Class C) und der Sender stellt die größte Input-Summe (Class B).
+4. Outputs: Change an den Sender an erster Stelle (wie `omni_createrawtx_change`), dann die Daten, die
+   Referenz an letzter Stelle. Die Referenzregel überspringt den ersten Output an den Sender.
+5. Gebühr: `estimatesmartfee` für 6 Blöcke, sonst `fallbackfee`, mindestens die Relay-Gebühr. Dust-Grenzen
+   wie OmniLite (`OmniGetDustThreshold`, 30-fache Relay-Dust-Grenze).
+6. **Dry-Run:** Die fertige Tx läuft durch den eigenen Decoder (Sender, Referenz und Payload müssen
+   stimmen) und die State Engine, auf einer Kopie des aktuellen States plus der eigenen noch
+   unbestätigten Txs. Ist sie Omni-ungültig, wird **nicht** gesendet. Der Index muss dafür auf der Höhe
+   des Nodes sein.
+7. `signrawtransactionwithwallet`, `sendrawtransaction`, als Pending vormerken.
 
 **Pending**
-- Eigene unbestätigte Txs zählen sofort gegen Token- und UTXO-Bestand. Sonst baut man zwei Sends,
-  die zusammen mehr ausgeben, als da ist.
-- Bei Reorg oder Ablauf aus dem Mempool wird die Tx wieder Pending oder als verworfen markiert.
+- Eigene unbestätigte Txs zählen sofort gegen den Token-Bestand (Pending-Abzug und Dry-Run). Die Coins
+  sperrt die Node-Wallet selbst, sobald die Tx im Mempool ist.
+- Verlässt die Tx den Mempool oder steht sie in einem Block, fällt sie aus der Pending-Liste.
 - RBF und CPFP für hängende Txs (später).
 
 **Zugriff**
-- Zwei getrennte Schnittstellen: die **Public API** (nur lesen, darf ins Netz) und die **Wallet API**
-  (bauen, signieren, senden). Die Wallet API lauscht standardmäßig nur auf `127.0.0.1`, mit
-  Token-Auth, und lässt sich komplett abschalten (`wallet=0`, reiner Indexer).
-- Die Website spricht nur mit der Public API. Signiert wird nie auf dem Webserver.
+- Senden ist standardmäßig aus (`wallet=0`). Für einen Provider bleibt das so: reiner Indexer.
+- Mit `wallet=1` hängen die `omni_send*`-Aufrufe an der normalen API. Die lauscht standardmäßig nur auf
+  `127.0.0.1`. Wer senden kann, darf die API nicht offen ins Netz stellen.
+- Die Website spricht nur mit einem Indexer ohne `wallet=1`. Signiert wird nie auf dem Webserver.
 
 ---
 
@@ -184,10 +174,10 @@ und welche davon in DEx-Offers oder Accepts reserviert sind.
 | `activation.cpp`, `rules.cpp` | `consensus/rules` | Feature-Activations, Alerts, Block-Parameter |
 | `consensushash.cpp` | `consensus/hash` | Consensus-Hash, identisch zur Referenz |
 | `rpc*.cpp`, `rpctxobject.cpp` | `api` | `omni_*`-JSON-Format |
-| `createpayload.cpp`, `rpcpayload.cpp` | `wallet/payload` | Payloads für alle Tx-Typen |
-| `encoding.cpp`, `script.cpp` | `wallet/encode` | Class B (Multisig + Verschleierung) und Class C (OP_RETURN) |
-| `wallettxbuilder.cpp`, `createtx.cpp` | `wallet/builder` | Input-Auswahl, Referenz, Change, Gebühr |
-| `rpctx.cpp` | `api/wallet` | `omni_send*` |
+| `createpayload.cpp`, `rpcpayload.cpp` | `omni/create`, `api/wallet` | Payloads für alle Tx-Typen |
+| `encoding.cpp`, `script.cpp` | `omni/encode`, `wallet/fee` | Class B (Multisig + Verschleierung) und Class C (OP_RETURN), Dust |
+| `wallettxbuilder.cpp`, `walletutils.cpp`, `createtx.cpp` | `wallet` | Input-Auswahl, Referenz, Change, Gebühr, Dry-Run |
+| `rpctx.cpp`, `rpcrawtx.cpp` | `api/wallet` | `omni_send*`, `omni_createrawtx_*` |
 | `pending.cpp` | `state/pending` | Unbestätigte Txs im State |
 | `test/*.cpp` | `*_test.go` | Unit-Tests portieren |
 
@@ -300,14 +290,26 @@ Zeile in OmniLite 0.18.1, aus der sie stammt.
   zurückgekehrte Tx neu dekodiert. ZMQ ist noch nicht angebunden, Polling reicht für den Anfang.
   Der Regtest-Durchlauf steht aus.
 
-### Phase 7 – Wallet-Basis und Senden
-- Keystore (HD, Import, Watch-only, Verschlüsselung), UTXO-Tracking, Signer-Schnittstelle, PSBT.
-- Tx-Builder mit Class C und Class B, Dry-Run, Broadcast.
+### Phase 7 – Senden über die Node-Wallet
+- Tx-Builder mit Class C und Class B, Coins und Signatur von der Node-Wallet, Dry-Run, Broadcast.
 - Erste Aktionen: `omni_send`, `omni_sendall`, `omni_sendnonfungible`, `omni_sendanydata`.
 - Zusätzlich rohe Bausteine: `omni_createpayload_*`, `omni_createrawtx_*`, `omni_sendrawtx`.
 - **Fertig, wenn:** im Regtest gebaute Txs vom Referenz-Node (`omnilitecored`) als gültig gewertet werden,
   mit identischem Ergebnis in `omni_gettransaction`, und ein absichtlich ungültiger Send vom Dry-Run
   abgefangen wird.
+- **Stand:** umgesetzt (`internal/wallet`, `internal/omni/create.go`, `internal/omni/encode.go`,
+  `internal/api/wallet.go`). Mit `wallet=1` (und `walletname` bei mehreren Wallets) gibt es `omni_send`,
+  `omni_sendall`, `omni_sendnonfungible`, `omni_sendanydata` und `omni_sendrawtx` mit den Prüfungen und
+  Fehlermeldungen von OmniLite (`RequireBalance` inkl. Pending, `RequireNonFungibleTokenOwner`,
+  Referenzbetrag höchstens 0,01 LTC). Ohne `wallet=1` und für Provider gibt es nur die reinen Bausteine:
+  `omni_createpayload_simplesend`, `_sendall`, `_sendnonfungible`, `_anydata` und `omni_createrawtx_opreturn`,
+  `_multisig`, `_input`, `_reference`, `_change`. Builder wie oben beschrieben; der Dry-Run lehnt ab, wenn
+  der Index nicht auf der Höhe des Nodes ist, wenn Sender, Referenz oder Payload anders erkannt würden
+  oder wenn die Tx Omni-ungültig wäre (Meldung mit dem `invalidreason` von OmniLite). Gesendete Txs
+  erscheinen sofort in `omni_listpendingtransactions`. Abweichungen von OmniLite: die Change-Position ist
+  fest (erster Output) statt zufällig, und Send All, Any Data und Raw-Txs prüfen zusätzlich den Dry-Run.
+  Getestet mit einer simulierten Node-Wallet; die Gegenprobe im Regtest gegen `omnilitecored` steht aus.
+  Offen: `omni_decodetransaction`, `ismine` über `getaddressinfo`.
 
 ### Phase 8 – Token-Verwaltung
 - Property erstellen: `omni_sendissuancefixed`, `omni_sendissuancemanaged`, `omni_sendissuancecrowdsale`.
@@ -337,14 +339,13 @@ Zeile in OmniLite 0.18.1, aus der sie stammt.
 ### Phase 10 – Betrieb
 - Windows-Dienst und systemd-Unit, Docker-Image.
 - Snapshot-Export und -Import (DB-Datei + Höhe + Hash), damit niemand ab Genesis syncen muss.
-- Backups: Seed-Export, verschlüsseltes Wallet-Backup.
 - Metriken: Höhe, Lag zum Node, Reorgs, Dauer pro Block.
 
 ### Phase 11 – Später (optional)
 - Eigener Prevout-Cache statt `-txindex`.
 - RBF und CPFP für hängende Txs.
-- Einfache Web-Oberfläche für die Wallet (lokal).
-- Hardware-Wallet direkt anbinden statt nur über PSBT.
+- Einfache lokale Web-Oberfläche zum Senden (über die Node-Wallet).
+- `omni_send*` mit Ausgabe als PSBT statt Signieren (für externe Signer an der Node-Wallet vorbei).
 
 ---
 
@@ -377,10 +378,11 @@ Konsens ist alles. Ein Indexer, der an einer Stelle abweicht, ist wertlos.
 | Thema | Risiko | Umgang |
 |---|---|---|
 | MWEB / HogEx (Litecoin 0.21) | 0.18-Nodes sehen MWEB-Daten nicht. Txs, die Peg-out-Outputs der HogEx ausgeben, könnten anders erscheinen. | Bei der Kandidatenerkennung alles ignorieren, was 0.18 nicht sieht. Gezielter Test mit Peg-out-Inputs. |
-| Adresstypen | Nur P2PKH/P2SH als Sender. Wer Token an `ltc1…` schickt, verliert sie praktisch. | Wallet erzeugt nur `M…` und lehnt Bech32-Empfänger ab. P2SH-P2WPKH als Sender ist im Mainnet erprobt (LiteWorlds nutzt es), trotzdem in die Regtest-Gegenprobe aufnehmen. |
+| Adresstypen | Nur P2PKH/P2SH als Sender. Wer Token an `ltc1…` schickt, verliert sie praktisch. | Builder nimmt nur `L…`/`M…` an, neue Adressen per `getnewaddress "" p2sh-segwit`. P2SH-P2WPKH als Sender ist im Mainnet erprobt (LiteWorlds nutzt es), trotzdem in die Regtest-Gegenprobe aufnehmen. |
 | Verlorene Gebühren | Omni-ungültige Txs landen trotzdem in der Chain. | Pflicht-Dry-Run vor jedem Broadcast, Pending zählt mit. |
 | DEx-Zahlung | Zu spät, zu wenig oder an den falschen Seller gezahlt → LTC weg. | Zahlungs-Wächter, Betrag und Window im Dry-Run prüfen, nur über `omni_senddexpay` zahlen. |
-| Schlüssel | Diebstahl, wenn die Wallet API offen im Netz hängt. | Wallet API nur lokal, Token-Auth, verschlüsselter Keystore, abschaltbar. |
+| Schlüssel | Fremde senden über eine offene API mit `wallet=1`. | Senden ist standardmäßig aus, API lauscht nur auf `127.0.0.1` mit Auth. Schlüssel bleiben in der Node-Wallet, die gesperrt sein kann (`walletpassphrase`). |
+| Node-Wallet-RPCs | Wallet-Aufrufe ändern sich zwischen Core-Versionen eher als die Block-RPCs. | Nur `listunspent`, `getaddressinfo`, `signrawtransactionwithwallet`, `sendrawtransaction`; alle seit 0.17 stabil. Regtest gegen 0.18 und 0.21 testen. |
 | Sender-Regel | Falscher erster Input → Tx gilt als von einer anderen Adresse. | Builder setzt die Input-Reihenfolge fest, Dry-Run prüft den erkannten Sender. |
 | Rundung / Überlauf | Crowdsale- und STO-Mathe nutzt 128-Bit-Zwischenwerte. | `math/big` bzw. `uint128` mit Tests aus `uint256_extensions.h`. |
 | Bugs in 0.18.1 | Referenz-Fehler gehören zum Konsens. | Nachbauen, dokumentieren, nicht „reparieren". |
@@ -392,7 +394,8 @@ Konsens ist alles. Ein Indexer, der an einer Stelle abweicht, ist wertlos.
 **Entschieden**
 - Projektname: **OmniLite Standalone** (`omnilite-standalone`).
 - DEx: kein automatisches Zahlen. Abschließen ist immer manuell.
-- Neue Wallet-Adressen nur `M…` (BIP49, wie liteworlds.quest).
+- Keine eigene Wallet: Senden läuft über die Wallet des `litecoind`. Als Provider reiner Indexer.
+- Absender und Empfänger nur `L…`/`M…`, neue Adressen `M…` (P2SH-P2WPKH, wie liteworlds.quest).
 - Lizenz: MIT (wie OmniLite). Portierter Code behält die Copyright-Hinweise der Omni-Core-Entwickler.
 - Repo: `github.com/tbuuol/omnilite-standalone`.
 
