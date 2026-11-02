@@ -78,3 +78,9 @@ func Litoshi(v json.Number) (int64, error) {
 	}
 	return n, nil
 }
+
+// GetRawMempool returns the txids in the node's mempool.
+func (c *Client) GetRawMempool(ctx context.Context) ([]string, error) {
+	var r []string
+	return r, c.Call(ctx, "getrawmempool", &r)
+}

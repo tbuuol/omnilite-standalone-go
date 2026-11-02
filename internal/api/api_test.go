@@ -16,6 +16,7 @@ import (
 
 	"github.com/tbuuol/omnilite-standalone/internal/chain"
 	"github.com/tbuuol/omnilite-standalone/internal/indexer"
+	"github.com/tbuuol/omnilite-standalone/internal/mempool"
 	"github.com/tbuuol/omnilite-standalone/internal/omni"
 	"github.com/tbuuol/omnilite-standalone/internal/state"
 	"github.com/tbuuol/omnilite-standalone/internal/store"
@@ -271,4 +272,41 @@ func TestServerProtocol(t *testing.T) {
 	if !strings.Contains(string(data), `"name":"Coin"`) || !strings.Contains(string(data), `"Property identifier does not exist"`) {
 		t.Errorf("batch = %s", data)
 	}
+}
+
+type fakePool struct {
+	entries []*mempool.Entry
+	debit   int64
+}
+
+func (p *fakePool) Get(txid string) *mempool.Entry {
+	for _, e := range p.entries {
+		if e.Record.Txid == txid {
+			return e
+		}
+	}
+	return nil
+}
+func (p *fakePool) List() []*mempool.Entry { return p.entries }
+func (p *fakePool) PendingDebit(addr string, id uint32) int64 {
+	return map[bool]int64{true: p.debit}[addr == alice && id == 3]
+}
+
+func TestPending(t *testing.T) {
+	f := standard(t)
+	payload := sendPayload(3, 25_00000000)
+	pool := &fakePool{debit: 25_00000000, entries: []*mempool.Entry{
+		{Record: &indexer.Record{Txid: txid(50), Sender: alice, Reference: bob, Fee: 1000, Payload: hex.EncodeToString(payload)}},
+		// Already confirmed, the next poll would drop it.
+		{Record: &indexer.Record{Txid: txid(2), Sender: alice, Reference: bob, Payload: hex.EncodeToString(sendPayload(3, 1))}},
+	}}
+	f.srv.Config.Handler.(*Server).Pool = pool
+
+	want := `{"txid":"` + txid(50) + `","fee":"0.00001000","sendingaddress":"` + alice + `","referenceaddress":"` + bob + `","ismine":false,"version":0,"type_int":0,"type":"Simple Send","propertyid":3,"divisible":true,"amount":"25.00000000","confirmations":0}`
+	f.want("omni_gettransaction", want, txid(50))
+	f.want("omni_listpendingtransactions", "["+want+"]")
+	f.want("omni_listpendingtransactions", "["+want+"]", bob)
+	f.want("omni_listpendingtransactions", "[]", addr(0x01))
+	// The pending send lowers the available balance until it confirms.
+	f.want("omni_getbalance", `{"balance":"575.00000000","reserved":"100.00000000","frozen":"0.00000000"}`, alice, 3)
 }

@@ -53,9 +53,11 @@ type Server struct {
 	Store  *store.Store
 	Params *chain.Params
 	Node   Node
-	User   string
-	Pass   string
-	Log    *slog.Logger
+	// Pool, if set, provides unconfirmed transactions and pending debits.
+	Pool Pool
+	User string
+	Pass string
+	Log  *slog.Logger
 }
 
 // passThrough lists the read-only node calls forwarded to litecoind.
@@ -170,7 +172,7 @@ func (s *Server) call(ctx context.Context, method string, params []json.RawMessa
 	if h, ok := methods[method]; ok {
 		var result any
 		err := s.Store.Read(ctx, func(snap *store.Snapshot) error {
-			q := newQuery(snap, s.Params)
+			q := newQuery(snap, s.Params, s.Pool)
 			var err error
 			result, err = h(q, args(params))
 			return err

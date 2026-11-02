@@ -36,6 +36,7 @@ func init() {
 		"omni_getnonfungibletokendata":   getNonFungibleTokenData,
 		"omni_getnonfungibletokenranges": getNonFungibleTokenRanges,
 		"omni_createpayload_dexsell":     createPayloadDExSell,
+		"omni_listpendingtransactions":   listPendingTransactions,
 	}
 }
 
@@ -108,6 +109,10 @@ func (q *query) balanceObject(o *object, addr string, id uint32, divisible bool)
 		return false, err
 	}
 	available, reserved := t[state.Balance], t[state.SellOfferReserve]+t[state.AcceptReserve]
+	if q.pool != nil {
+		// GetAvailableTokenBalance: the balance minus our own pending sends.
+		available -= q.pool.PendingDebit(addr, id)
+	}
 	var frozenAmount int64
 	if frozen {
 		frozenAmount = available

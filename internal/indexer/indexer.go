@@ -71,6 +71,9 @@ type Indexer struct {
 	State state.Options
 	// HashEvery logs the consensus hash every n blocks (0: off).
 	HashEvery int64
+	// Confirmed, if set, is called for every transaction of a connected
+	// block, like PendingDelete in mastercore_handler_tx.
+	Confirmed func(txid string)
 
 	// prev caches outputs of transactions fetched for input lookups.
 	prev map[string][]omni.Output
@@ -99,6 +102,9 @@ func (ix *Indexer) ConnectBlock(ctx context.Context, tx *store.BlockTx, hdr *rpc
 
 	for idx := range blk.Tx {
 		t := &blk.Tx[idx]
+		if ix.Confirmed != nil {
+			ix.Confirmed(t.Txid)
+		}
 		if t.IsCoinbase() {
 			// OmniLite cannot load coinbase inputs and drops these (-101).
 			continue
@@ -273,4 +279,20 @@ func convertOutputs(t *rpc.Tx) ([]omni.Output, error) {
 		outs[i] = omni.Output{Script: script, Value: v}
 	}
 	return outs, nil
+}
+
+// DecodeTx decodes a single transaction outside of a block, e.g. from the
+// mempool. It returns nil for transactions OmniLite would not list.
+func (ix *Indexer) DecodeTx(ctx context.Context, t *rpc.Tx) (*Record, *omni.Message, error) {
+	if t.IsCoinbase() {
+		return nil, nil, nil
+	}
+	outs, err := convertOutputs(t)
+	if err != nil {
+		return nil, nil, fmt.Errorf("tx %s: %w", t.Txid, err)
+	}
+	if !ix.Dec.HasMarker(outs) || ix.Dec.EncodingClass(outs) == omni.NoMarker {
+		return nil, nil, nil
+	}
+	return ix.decode(ctx, t, outs, nil)
 }

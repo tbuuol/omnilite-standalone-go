@@ -21,6 +21,7 @@ import (
 	"github.com/tbuuol/omnilite-standalone/internal/api"
 	"github.com/tbuuol/omnilite-standalone/internal/config"
 	"github.com/tbuuol/omnilite-standalone/internal/indexer"
+	"github.com/tbuuol/omnilite-standalone/internal/mempool"
 	"github.com/tbuuol/omnilite-standalone/internal/omni"
 	"github.com/tbuuol/omnilite-standalone/internal/rpc"
 	"github.com/tbuuol/omnilite-standalone/internal/state"
@@ -87,8 +88,13 @@ func run(ctx context.Context, cfg *config.Config) error {
 	}
 	defer st.Close()
 
+	// The mempool view decodes with its own indexer: the prevout cache is
+	// not shared with the syncer's goroutine.
+	pool := &mempool.Pool{Node: client, Dec: &indexer.Indexer{Node: client, Dec: dec}, Poll: cfg.PollInterval, Log: slog.Default()}
+	go pool.Run(ctx)
+
 	if cfg.API {
-		if err := startAPI(ctx, cfg, client, st); err != nil {
+		if err := startAPI(ctx, cfg, client, st, pool); err != nil {
 			return err
 		}
 	}
@@ -100,7 +106,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Proc: &indexer.Indexer{Node: client, Dec: dec, Log: slog.Default(), State: state.Options{
 			ActivationAllowSenders: cfg.ActivationAllowSenders,
 			AlertAllowSenders:      cfg.AlertAllowSenders,
-		}, HashEvery: cfg.ConsensusHashEvery},
+		}, HashEvery: cfg.ConsensusHashEvery, Confirmed: pool.Confirmed},
 		Start: cfg.Chain.OmniGenesis,
 		Poll:  cfg.PollInterval,
 		Log:   slog.Default(),
@@ -109,7 +115,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 }
 
 // startAPI serves the JSON-RPC API until ctx ends.
-func startAPI(ctx context.Context, cfg *config.Config, client *rpc.Client, st *store.Store) error {
+func startAPI(ctx context.Context, cfg *config.Config, client *rpc.Client, st *store.Store, pool *mempool.Pool) error {
 	user, pass := cfg.APIUser, cfg.APIPassword
 	if pass == "" {
 		b := make([]byte, 32)
@@ -135,7 +141,7 @@ func startAPI(ctx context.Context, cfg *config.Config, client *rpc.Client, st *s
 		return fmt.Errorf("api: %w", err)
 	}
 	srv := &http.Server{
-		Handler:           &api.Server{Store: st, Params: &cfg.Chain, Node: client, User: user, Pass: pass, Log: slog.Default()},
+		Handler:           &api.Server{Store: st, Params: &cfg.Chain, Node: client, Pool: pool, User: user, Pass: pass, Log: slog.Default()},
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

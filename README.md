@@ -3,9 +3,9 @@
 Eigenständiger OmniLite-Indexer (und später Wallet), der gegen jeden aktuellen `litecoind`
 läuft, statt an einen gepatchten Litecoin Core gebunden zu sein. Details und Phasen: [Plan.md](Plan.md).
 
-**Stand:** Phase 0 bis 5. Der Indexer folgt der Chain ab dem Omni-Genesis-Block, behandelt Reorgs,
+**Stand:** Phase 0 bis 6. Der Indexer folgt der Chain ab dem Omni-Genesis-Block, behandelt Reorgs,
 berechnet den vollständigen Omni-State wie OmniLite 0.18.1 und bietet eine JSON-RPC-API mit den
-`omni_*`-Aufrufen von `omnilitecored`. Datenbanken älterer Phasen müssen gelöscht und neu aufgebaut werden.
+`omni_*`-Aufrufen von `omnilitecored`, auch für unbestätigte Transaktionen aus dem Mempool. Datenbanken älterer Phasen müssen gelöscht und neu aufgebaut werden.
 
 ## Voraussetzungen
 

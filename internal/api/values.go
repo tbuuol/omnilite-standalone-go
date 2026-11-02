@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/tbuuol/omnilite-standalone/internal/chain"
+	"github.com/tbuuol/omnilite-standalone/internal/mempool"
 	"github.com/tbuuol/omnilite-standalone/internal/omni"
 	"github.com/tbuuol/omnilite-standalone/internal/state"
 	"github.com/tbuuol/omnilite-standalone/internal/store"
@@ -79,14 +80,22 @@ func formatByType(n int64, propType uint16) string {
 }
 
 // query is one API call's view of the state.
+// Pool is the mempool view the API reads unconfirmed transactions from.
+type Pool interface {
+	Get(txid string) *mempool.Entry
+	List() []*mempool.Entry
+	PendingDebit(addr string, property uint32) int64
+}
+
 type query struct {
 	snap   *store.Snapshot
 	st     *state.State
 	params *chain.Params
+	pool   Pool
 }
 
-func newQuery(snap *store.Snapshot, p *chain.Params) *query {
-	return &query{snap: snap, st: state.New(snap, p, state.Options{}), params: p}
+func newQuery(snap *store.Snapshot, p *chain.Params, pool Pool) *query {
+	return &query{snap: snap, st: state.New(snap, p, state.Options{}), params: p, pool: pool}
 }
 
 // formatMP mirrors FormatMP.

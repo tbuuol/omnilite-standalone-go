@@ -291,6 +291,14 @@ Zeile in OmniLite 0.18.1, aus der sie stammt.
 - Pending-State wie in `pending.cpp`, `omni_listpendingtransactions`.
 - **Fertig, wenn:** eine im Regtest gesendete Omni-Tx sofort als Pending erscheint und nach dem Mining
   korrekt in den bestätigten State übergeht (auch über einen Reorg hinweg).
+- **Stand:** umgesetzt (`internal/mempool`): Der Mempool wird per `getrawmempool` im `pollinterval` abgefragt,
+  neue Txs werden einmal geholt und mit dem Indexer-Decoder geprüft. `omni_listpendingtransactions` und
+  `omni_gettransaction` zeigen unbestätigte Txs mit `confirmations: 0` und ohne Gültigkeit, wie OmniLite.
+  Unbestätigte DEx-Zahlungen erscheinen nicht (OmniLite: „Unconfirmed transactions are not supported“).
+  Pending-Abzüge (`AddPending`) gibt es nur für Txs, die dieses Programm selbst sendet (ab Phase 7); sie
+  verschwinden, sobald die Tx in einem Block steht oder den Mempool verlässt. Nach einem Reorg wird eine
+  zurückgekehrte Tx neu dekodiert. ZMQ ist noch nicht angebunden, Polling reicht für den Anfang.
+  Der Regtest-Durchlauf steht aus.
 
 ### Phase 7 – Wallet-Basis und Senden
 - Keystore (HD, Import, Watch-only, Verschlüsselung), UTXO-Tracking, Signer-Schnittstelle, PSBT.

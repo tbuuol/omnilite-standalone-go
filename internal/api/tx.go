@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"sort"
 
 	"github.com/tbuuol/omnilite-standalone/internal/indexer"
@@ -79,13 +80,19 @@ func showReference(t uint16) bool {
 	return true
 }
 
-// transaction mirrors populateRPCTransactionObject for confirmed transactions.
+// transaction mirrors populateRPCTransactionObject. Unconfirmed
+// transactions come from the mempool and have no validity yet.
 func (q *query) transaction(txid string, extended bool, filter string) (any, error) {
 	rec, err := q.record(txid)
 	if err != nil {
 		return nil, err
 	}
 	if rec == nil {
+		if q.pool != nil {
+			if e := q.pool.Get(txid); e != nil {
+				return q.unconfirmed(e.Record, filter)
+			}
+		}
 		return nil, errorf(codeInvalidAddress, "No Omni Layer Protocol transaction")
 	}
 	tip, err := q.height()
@@ -166,7 +173,7 @@ func (q *query) transaction(txid string, extended bool, filter string) (any, err
 	if m.Type != omni.TypeSimpleSend {
 		o.add("type", omni.TypeName(m.Type))
 	}
-	if err := q.typeInfo(o, txid, m, res, extended, filter); err != nil {
+	if err := q.typeInfo(o, txid, m, res, true, extended, filter); err != nil {
 		return nil, err
 	}
 	o.add("valid", valid)
@@ -185,7 +192,7 @@ func (q *query) transaction(txid string, extended bool, filter string) (any, err
 }
 
 // typeInfo mirrors populateRPCTypeInfo.
-func (q *query) typeInfo(o *object, txid string, m *omni.Message, res *state.Result, extended bool, filter string) error {
+func (q *query) typeInfo(o *object, txid string, m *omni.Message, res *state.Result, confirmed, extended bool, filter string) error {
 	mp := func(id uint32, n uint64) string {
 		s, _ := q.formatMP(id, int64(n))
 		return s
@@ -200,6 +207,9 @@ func (q *query) typeInfo(o *object, txid string, m *omni.Message, res *state.Res
 		newAmount = res.NewAmount
 	}
 	createdProperty := func() error {
+		if !confirmed {
+			return nil
+		}
 		id, err := q.st.PropertyByTx(txid)
 		if err != nil {
 			return err
@@ -408,4 +418,74 @@ func propertyTypeName(t uint16) string {
 		return "non-fungible"
 	}
 	return "unknown"
+}
+
+// unconfirmed populates a mempool transaction: no validity, no block.
+func (q *query) unconfirmed(rec *indexer.Record, filter string) (any, error) {
+	payload, err := hex.DecodeString(rec.Payload)
+	if err != nil {
+		return nil, err
+	}
+	m, err := omni.Interpret(payload, rec.Sender, rec.Reference, q.params)
+	if err != nil {
+		return nil, errorf(codeInvalidAddress, "No Omni Layer Protocol transaction")
+	}
+	if filter != "" && rec.Sender != filter && m.Receiver != filter {
+		return nil, errorf(codeInternal, "Generic transaction population failure")
+	}
+	o := (&object{}).
+		add("txid", rec.Txid).
+		add("fee", formatDivisible(rec.Fee)).
+		add("sendingaddress", rec.Sender)
+	if showReference(m.Type) {
+		o.add("referenceaddress", m.Receiver)
+	}
+	o.add("ismine", false).add("version", m.Version).add("type_int", m.Type)
+	if m.Type != omni.TypeSimpleSend {
+		o.add("type", omni.TypeName(m.Type))
+	}
+	if err := q.typeInfo(o, rec.Txid, m, nil, false, false, ""); err != nil {
+		return nil, err
+	}
+	return o.add("confirmations", 0), nil
+}
+
+func listPendingTransactions(q *query, a args) (any, error) {
+	if err := a.count(0, 1, "omni_listpendingtransactions ( \"address\" )"); err != nil {
+		return nil, err
+	}
+	filter := ""
+	if a.has(0) {
+		s, err := a.str(0)
+		if err != nil {
+			return nil, err
+		}
+		if s != "" {
+			if filter, err = q.address(a, 0); err != nil {
+				return nil, err
+			}
+		}
+	}
+	res := array{}
+	if q.pool == nil {
+		return res, nil
+	}
+	for _, e := range q.pool.List() {
+		// Confirmed meanwhile; the next mempool poll drops it.
+		if rec, err := q.record(e.Record.Txid); err != nil {
+			return nil, err
+		} else if rec != nil {
+			continue
+		}
+		obj, err := q.unconfirmed(e.Record, filter)
+		var apiErr *Error
+		if errors.As(err, &apiErr) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, obj)
+	}
+	return res, nil
 }
