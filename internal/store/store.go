@@ -21,7 +21,8 @@ import (
 // the processor starts writing new records: older databases must be rebuilt.
 // 2: Omni transaction records (phase 2).
 // 3: balances, properties, activations and alerts (phase 3).
-const schemaVersion = 3
+// 4: crowdsales, STO, DEx, freezing and NFTs (phase 4).
+const schemaVersion = 4
 
 const schema = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -405,3 +406,19 @@ func prefixEnd(prefix string) (string, bool) {
 	}
 	return "", false
 }
+
+// View is a read-only state view outside of a block, for queries.
+type View struct {
+	ctx context.Context
+	s   *Store
+}
+
+// View returns a read-only view of the committed state.
+func (s *Store) View(ctx context.Context) *View { return &View{ctx: ctx, s: s} }
+
+var errReadOnly = errors.New("store view is read-only")
+
+func (v *View) Get(ns, key string) ([]byte, bool, error) { return v.s.Get(v.ctx, ns, key) }
+func (v *View) Scan(ns, prefix string) ([]KV, error)     { return v.s.Scan(v.ctx, ns, prefix) }
+func (v *View) Put(string, string, []byte) error         { return errReadOnly }
+func (v *View) Delete(string, string) error              { return errReadOnly }

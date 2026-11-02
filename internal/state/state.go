@@ -24,12 +24,18 @@ const (
 	NsProperty   = "prop"       // property → Property (JSON)
 	NsPropertyTx = "proptx"     // creation txid → property
 	NsTotal      = "total"      // property → tokens held in balances and reserves
-	NsMeta       = "meta"       // next property IDs, incomplete marker
+	NsMeta       = "meta"       // next property IDs
 	NsFeature    = "feature"    // feature → activation block, once changed by a transaction
 	NsActivation = "activation" // pending and completed activations
 	NsAlert      = "alert"      // active alerts
-	NsFrozen     = "frozen"     // address/property → frozen (written from phase 4)
+	NsFrozen     = "frozen"     // address/property → frozen
 	NsResult     = "result"     // txid → Result (JSON)
+	NsHolder     = "holder"     // property/address → present once the address had a tally for it
+	NsFreezing   = "freezing"   // property/live block → freezing enabled from that block
+	NsNFT        = "nft"        // non-fungible token ranges and data (nftdb key format)
+	NsCrowd      = "crowd"      // issuer address → active crowdsale (JSON)
+	NsOffer      = "offer"      // seller-property → DEx sell offer (JSON)
+	NsAccept     = "accept"     // seller-property+buyer → DEx accept (JSON)
 )
 
 // Property IDs and limits (src/omnicore/omnicore.h).
@@ -68,12 +74,36 @@ type IssuerChange struct {
 	Issuer string `json:"issuer"`
 }
 
-// TokenChange is one entry of historicalData: tokens granted or revoked by
-// a transaction of a managed property.
-type TokenChange struct {
-	Txid    string `json:"txid"`
-	Granted int64  `json:"granted"`
-	Revoked int64  `json:"revoked"`
+// HistoryEntry is one entry of historicalData: [granted, revoked] for
+// managed properties, [amount paid, block time, user tokens, issuer tokens]
+// for crowdsale purchases.
+type HistoryEntry struct {
+	Txid string  `json:"txid"`
+	Data []int64 `json:"data"`
+}
+
+// uint256Less orders txids like std::map<uint256>: by the internal
+// (little-endian) bytes, i.e. the hex string read from the end.
+func uint256Less(a, b string) bool {
+	for i := len(a) - 2; i >= 0 && i < len(b); i -= 2 {
+		if a[i:i+2] != b[i:i+2] {
+			return a[i:i+2] < b[i:i+2]
+		}
+	}
+	return false
+}
+
+// insertHistory mirrors std::map::insert: an existing txid is kept.
+func insertHistory(h []HistoryEntry, e HistoryEntry) []HistoryEntry {
+	for i, x := range h {
+		if x.Txid == e.Txid {
+			return h
+		}
+		if uint256Less(e.Txid, x.Txid) {
+			return append(h[:i], append([]HistoryEntry{e}, h[i:]...)...)
+		}
+	}
+	return append(h, e)
 }
 
 // Property is a smart property (CMPSPInfo::Entry). Strings are kept as raw
@@ -96,7 +126,18 @@ type Property struct {
 	CreationBlock string         `json:"creationblock"`
 	UpdateBlock   string         `json:"updateblock"`
 	Issuers       []IssuerChange `json:"issuers"`
-	History       []TokenChange  `json:"history,omitempty"`
+	History       []HistoryEntry `json:"history,omitempty"`
+
+	// Crowdsale fields (type 51).
+	PropertyDesired uint32 `json:"desired,omitempty"`
+	Deadline        int64  `json:"deadline,omitempty"`
+	EarlyBird       uint8  `json:"earlybird,omitempty"`
+	Percentage      uint8  `json:"percentage,omitempty"`
+	CloseEarly      bool   `json:"closeearly,omitempty"`
+	MaxTokens       bool   `json:"maxtokens,omitempty"`
+	MissedTokens    int64  `json:"missed,omitempty"`
+	TimeClosed      int64  `json:"timeclosed,omitempty"`
+	TxidClose       string `json:"txidclose,omitempty"`
 }
 
 // Divisible mirrors Entry::isDivisible.
@@ -136,9 +177,18 @@ func (p *Property) updateIssuer(block int64, index int, issuer string) {
 	p.Issuers = append(p.Issuers, IssuerChange{block, index, issuer})
 }
 
+// KV is the store access the state needs. *store.BlockTx implements it;
+// store.View gives a read-only one for queries.
+type KV interface {
+	Get(ns, key string) ([]byte, bool, error)
+	Put(ns, key string, value []byte) error
+	Delete(ns, key string) error
+	Scan(ns, prefix string) ([]store.KV, error)
+}
+
 // State works on one block's store transaction.
 type State struct {
-	tx     *store.BlockTx
+	tx     KV
 	params *chain.Params
 	// Extra authorized senders, like -omniactivationallowsender and
 	// -omnialertallowsender. They change consensus and are for tests only.
@@ -152,7 +202,7 @@ type Options struct {
 	AlertAllowSenders      []string
 }
 
-func New(tx *store.BlockTx, params *chain.Params, opt Options) *State {
+func New(tx KV, params *chain.Params, opt Options) *State {
 	s := &State{tx: tx, params: params, activationAllow: map[string]bool{}, alertAllow: map[string]bool{}}
 	for _, a := range opt.ActivationAllowSenders {
 		s.activationAllow[a] = true
@@ -209,6 +259,13 @@ func (s *State) updateTally(addr string, id uint32, amount int64, ttype int) (bo
 		return false, err
 	} else if !ok {
 		if err := s.tx.Put(NsTally, addr, nil); err != nil {
+			return false, err
+		}
+	}
+	if _, ok, err := s.tx.Get(NsBalance, balanceKey(addr, id)); err != nil {
+		return false, err
+	} else if !ok {
+		if err := s.tx.Put(NsHolder, propKey(id)+"/"+addr, nil); err != nil {
 			return false, err
 		}
 	}

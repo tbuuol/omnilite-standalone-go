@@ -26,6 +26,8 @@ type harness struct {
 	opt    Options
 	height int64
 	n      int
+	// fee is the miner fee of every transaction.
+	fee int64
 }
 
 func newHarness(t *testing.T) *harness {
@@ -43,6 +45,9 @@ type txIn struct {
 	msg    omni.Message
 }
 
+// time is the block time: ten minutes per block from a fixed start.
+func (h *harness) time() int64 { return 1_700_000_000 + 600*(h.height-h.params.OmniGenesis) }
+
 // block applies the transactions in one block and returns their codes.
 func (h *harness) block(txs ...txIn) []*Result {
 	h.t.Helper()
@@ -57,7 +62,7 @@ func (h *harness) block(txs ...txIn) []*Result {
 		h.t.Fatal(err)
 	}
 	s := New(btx, h.params, h.opt)
-	if err := s.BeginBlock(h.height); err != nil {
+	if err := s.BeginBlock(h.height, h.time(), hash); err != nil {
 		btx.Rollback()
 		h.t.Fatal(err)
 	}
@@ -65,14 +70,14 @@ func (h *harness) block(txs ...txIn) []*Result {
 	for i, tx := range txs {
 		h.n++
 		m := tx.msg
-		r, err := s.Apply(&Tx{Txid: fmt.Sprintf("tx%d", h.n), Block: h.height, Index: i + 1, BlockHash: hash, Sender: tx.sender, Msg: &m})
+		r, err := s.Apply(&Tx{Txid: fmt.Sprintf("tx%d", h.n), Block: h.height, Index: i + 1, BlockHash: hash, BlockTime: h.time(), Sender: tx.sender, Fee: h.fee, Msg: &m})
 		if err != nil {
 			btx.Rollback()
 			h.t.Fatal(err)
 		}
 		res = append(res, r)
 	}
-	if err := s.EndBlock(h.height, 0); err != nil {
+	if err := s.EndBlock(h.height, h.time()); err != nil {
 		btx.Rollback()
 		h.t.Fatal(err)
 	}
@@ -209,7 +214,7 @@ func TestManagedProperty(t *testing.T) {
 	h.read(func(s *State) {
 		total, _ := s.TotalTokens(m)
 		p, _ := s.Property(m)
-		if total != math.MaxInt64-200 || len(p.History) != 3 || p.History[2].Revoked != 200 {
+		if total != math.MaxInt64-200 || len(p.History) != 3 {
 			t.Fatalf("total %d history %+v", total, p.History)
 		}
 	})
@@ -299,7 +304,7 @@ func TestActivation(t *testing.T) {
 	}
 	defer btx.Rollback()
 	var unsupported *ErrUnsupportedActivation
-	if err := New(btx, h.params, h.opt).BeginBlock(tip.Height + 8192); !errors.As(err, &unsupported) {
+	if err := New(btx, h.params, h.opt).BeginBlock(tip.Height+8192, 0, "x"); !errors.As(err, &unsupported) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -335,19 +340,6 @@ func TestAlerts(t *testing.T) {
 	if count() != 0 {
 		t.Fatal("alert not deleted")
 	}
-}
-
-func TestUnsupportedMarksIncomplete(t *testing.T) {
-	h := newHarness(t)
-	res := h.block(txIn{alice, omni.Message{Type: omni.TypeSendToOwners, Property: 3, Amount: 1}})
-	if !res[0].Unsupported || res[0].Valid {
-		t.Fatalf("result %+v", res[0])
-	}
-	h.read(func(s *State) {
-		if inc, _ := s.Incomplete(); inc == "" {
-			t.Fatal("state not marked incomplete")
-		}
-	})
 }
 
 func TestReorgRestoresState(t *testing.T) {

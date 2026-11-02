@@ -13,11 +13,18 @@ import (
 const (
 	pktError        = -9000
 	pktErrorSP      = -40000
+	pktErrorCrowd   = -45000
+	pktErrorSTO     = -50000
 	pktErrorSend    = -60000
+	pktErrorOffer   = -70000
 	pktErrorTokens  = -82000
 	pktErrorSendAll = -83000
 	pktErrorAnyData = -84000
 	pktErrorNFT     = -85000
+
+	dexErrorSellOffer = -10000
+	dexErrorAccept    = -20000
+	dexErrorPayment   = -30000
 )
 
 // Tx is a structurally valid Omni transaction ready to be applied.
@@ -26,8 +33,11 @@ type Tx struct {
 	Block     int64
 	Index     int
 	BlockHash string
+	BlockTime int64
 	Sender    string
 	Msg       *omni.Message
+	// Fee is the miner fee in litoshi; a DEx accept must pay the offer's minimum.
+	Fee int64
 }
 
 // SendAllItem is one property moved by a Send All.
@@ -44,9 +54,13 @@ type Result struct {
 	Type      uint16        `json:"type"`
 	NewAmount uint64        `json:"newamount"`
 	SendAll   []SendAllItem `json:"sendall,omitempty"`
-	// Unsupported marks logic that is not implemented yet. Its effect on
-	// the state is missing.
-	Unsupported bool `json:"unsupported,omitempty"`
+	STO       []STOReceive  `json:"sto,omitempty"`
+	// GrantStart and GrantEnd are the token range created by a grant of a
+	// non-fungible property.
+	GrantStart int64 `json:"grantstart,omitempty"`
+	GrantEnd   int64 `json:"grantend,omitempty"`
+	// Payments lists the DEx purchases of a payment transaction.
+	Payments []Purchase `json:"payments,omitempty"`
 }
 
 // Apply runs the logic of one transaction (interpretPacket after the
@@ -58,12 +72,7 @@ func (s *State) Apply(t *Tx) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tx %s: %w", t.Txid, err)
 	}
-	res.Code, res.Valid = code, code == 0 && !res.Unsupported
-	if res.Unsupported {
-		if err := s.markIncomplete(t); err != nil {
-			return nil, err
-		}
-	}
+	res.Code, res.Valid = code, code == 0
 	v, err := json.Marshal(res)
 	if err != nil {
 		return nil, err
@@ -99,29 +108,36 @@ func (s *State) apply(t *Tx, res *Result) (int, error) {
 		return s.deactivation(t)
 	case omni.TypeAlert:
 		return s.alert(t)
+	case omni.TypeSendToOwners:
+		return s.sendToOwners(t, res)
+	case omni.TypeSendNonFungible:
+		return s.sendNonFungible(t)
+	case omni.TypeTradeOffer:
+		return s.tradeOffer(t)
+	case omni.TypeAcceptOffer:
+		return s.acceptOffer(t, res)
+	case omni.TypeCreatePropertyVar:
+		return s.createCrowdsale(t)
+	case omni.TypeCloseCrowdsale:
+		return s.closeCrowdsale(t)
+	case omni.TypeEnableFreezing:
+		return s.enableFreezing(t)
+	case omni.TypeDisableFreezing:
+		return s.disableFreezingTx(t)
+	case omni.TypeFreezeTokens:
+		return s.freeze(t, true)
+	case omni.TypeUnfreezeTokens:
+		return s.freeze(t, false)
+	case omni.TypeNonFungibleData:
+		return s.nonFungibleData(t)
 	}
-	// Send To Owners, DEx, crowdsales, freezing and NFT data follow in phase 4.
-	res.Unsupported = true
-	return 0, nil
-}
-
-// Incomplete returns the first transaction whose logic is missing from
-// the state, or "" if the state is complete.
-func (s *State) Incomplete() (string, error) {
-	v, _, err := s.tx.Get(NsMeta, "incomplete")
-	return string(v), err
-}
-
-func (s *State) markIncomplete(t *Tx) error {
-	if _, ok, err := s.tx.Get(NsMeta, "incomplete"); err != nil || ok {
-		return err
-	}
-	return s.tx.Put(NsMeta, "incomplete", fmt.Appendf(nil, "block %d tx %s type %d", t.Block, t.Txid, t.Msg.Type))
+	// interpret_Transaction only lets the types above through.
+	return 0, fmt.Errorf("no logic for type %d", m.Type)
 }
 
 func validAmount(v uint64) bool { return v > 0 && v <= math.MaxInt64 }
 
-// logicMath_SimpleSend. Crowdsale participation follows in phase 4.
+// logicMath_SimpleSend.
 func (s *State) simpleSend(t *Tx) (int, error) {
 	m := t.Msg
 	if ok, err := s.typeAllowed(t.Block, m.Property, m.Type, m.Version); err != nil || !ok {
@@ -144,7 +160,10 @@ func (s *State) simpleSend(t *Tx) (int, error) {
 	if err := s.mustUpdate(t.Sender, m.Property, -amount, Balance); err != nil {
 		return 0, err
 	}
-	return 0, s.mustUpdate(m.Receiver, m.Property, amount, Balance)
+	if err := s.mustUpdate(m.Receiver, m.Property, amount, Balance); err != nil {
+		return 0, err
+	}
+	return 0, s.crowdsaleParticipation(t)
 }
 
 // logicMath_SendAll. The ecosystem byte doubles as property for the checks.
@@ -295,8 +314,7 @@ func (s *State) property(id uint32) (*Property, error) {
 	return p, err
 }
 
-// logicMath_GrantTokens. Token ranges of unique properties follow with the
-// NFT logic in phase 4.
+// logicMath_GrantTokens.
 func (s *State) grant(t *Tx, res *Result) (int, error) {
 	m := t.Msg
 	if ok, err := s.typeAllowed(t.Block, m.Property, m.Type, m.Version); err != nil || !ok {
@@ -326,13 +344,15 @@ func (s *State) grant(t *Tx, res *Result) (int, error) {
 	if amount > math.MaxInt64-total {
 		return pktErrorTokens - 44, nil
 	}
-	p.History = append(p.History, TokenChange{Txid: t.Txid, Granted: amount})
+	p.History = insertHistory(p.History, HistoryEntry{Txid: t.Txid, Data: []int64{amount, 0}})
 	p.UpdateBlock = t.BlockHash
 	if err := s.putProperty(p); err != nil {
 		return 0, err
 	}
 	if p.Unique {
-		res.Unsupported = true
+		if res.GrantStart, res.GrantEnd, err = s.nftCreate(m.Property, amount, m.Receiver, m.NFTData); err != nil {
+			return 0, err
+		}
 	}
 	return 0, s.mustUpdate(m.Receiver, m.Property, amount, Balance)
 }
@@ -364,7 +384,7 @@ func (s *State) revoke(t *Tx) (int, error) {
 	if err != nil || bal < amount {
 		return pktErrorTokens - 25, err
 	}
-	p.History = append(p.History, TokenChange{Txid: t.Txid, Revoked: amount})
+	p.History = insertHistory(p.History, HistoryEntry{Txid: t.Txid, Data: []int64{0, amount}})
 	p.UpdateBlock = t.BlockHash
 	if err := s.mustUpdate(t.Sender, m.Property, -amount, Balance); err != nil {
 		return 0, err
@@ -372,8 +392,7 @@ func (s *State) revoke(t *Tx) (int, error) {
 	return 0, s.putProperty(p)
 }
 
-// logicMath_ChangeIssuer. Crowdsales cannot exist before phase 4, so the
-// two checks for an active crowdsale (-39, -46) always pass.
+// logicMath_ChangeIssuer.
 func (s *State) changeIssuer(t *Tx) (int, error) {
 	m := t.Msg
 	if ok, err := s.typeAllowed(t.Block, m.Property, m.Type, m.Version); err != nil || !ok {
@@ -392,8 +411,14 @@ func (s *State) changeIssuer(t *Tx) (int, error) {
 	if t.Sender != p.IssuerAt(t.Block) {
 		return pktErrorTokens - 43, nil
 	}
+	if c, err := s.Crowdsale(t.Sender); err != nil || c != nil {
+		return pktErrorTokens - 39, err
+	}
 	if m.Receiver == "" {
 		return pktErrorTokens - 45, nil
+	}
+	if c, err := s.Crowdsale(m.Receiver); err != nil || c != nil {
+		return pktErrorTokens - 46, err
 	}
 	if m.Property == PropertyOmni || m.Property == PropertyTestOmni {
 		// updateSP on an implied property writes an entry getSP never

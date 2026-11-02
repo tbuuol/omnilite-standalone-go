@@ -244,6 +244,22 @@ Zeile in OmniLite 0.18.1, aus der sie stammt.
 - Crowdsales (inkl. Early Bonus, Issuer-Anteil, Deadline, Close), STO (v0 und v1),
   DEx (Offer, Accept, Zahlung, Expiry; mit FREEDEX für beliebige Properties), Freeze/Unfreeze, NFTs.
 - **Fertig, wenn:** der Consensus-Hash an **jeder** Blockhöhe ab Genesis mit der Referenz identisch ist.
+- **Stand:** umgesetzt (`internal/state`): Crowdsales (Teilnahme per Simple Send, Early Bird, Issuer-Bonus,
+  Max-Tokens, Ablauf am Blockanfang, Close mit Missed-Bonus), STO v0/v1, DEx (Offer v0/v1, Accept mit
+  Mindestgebühr, Zahlung über Class A, Ablauf am Blockende, FREEDEX), Freeze/Unfreeze inkl. Enable/Disable,
+  NFTs (Ranges beim Grant, Unique Send, Issuer-/Holder-Daten) und der Consensus-Hash (`-check`,
+  `consensushash=N` loggt ihn alle N Blöcke). Rechenwege und Testvektoren stammen aus den OmniLite-Tests
+  (`crowdsale_participation_tests`, `dex_purchase_tests`, `nftdb_tests`). Nachgebaute Eigenheiten:
+  - Im Consensus-Hash wird der Verkäufer eines Offers durch Abschneiden von zwei Zeichen aus `addr-prop`
+    gewonnen; ab Property 10 steht dort also ein Teil der Property-ID mit drin.
+  - Bei einer DEx-Zahlung mit FREEDEX zählt nur das (erste) aktuelle Offer des Verkäufers. Ist es
+    storniert, findet die Zahlung das noch offene Accept nicht.
+  - Ohne vorhandene OMNI-/TOMNI-Tokens kann niemand die STO-Gebühr zahlen; STO ist auf OmniLite also
+    praktisch immer ungültig (-50027).
+  - NFT-Daten (Typ 201) ersetzen nur Ranges, die ab dem Start lückenlos gefunden werden.
+  - Unique Send prüft in OmniLite `GetAvailableTokenBalance`, das Pending-Beträge der eigenen Wallet
+    abzieht. Das ist knotenabhängig und hier bewusst weggelassen.
+  Der Abgleich des Consensus-Hashes mit dem Referenz-Node steht aus.
 
 ### Phase 5 – API
 - JSON-RPC-Teilmenge, kompatibel zu `omnilitecored`:

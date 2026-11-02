@@ -87,7 +87,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		Proc: &indexer.Indexer{Node: client, Dec: dec, Log: slog.Default(), State: state.Options{
 			ActivationAllowSenders: cfg.ActivationAllowSenders,
 			AlertAllowSenders:      cfg.AlertAllowSenders,
-		}},
+		}, HashEvery: cfg.ConsensusHashEvery},
 		Start: cfg.Chain.OmniGenesis,
 		Poll:  cfg.PollInterval,
 		Log:   slog.Default(),
@@ -172,9 +172,9 @@ func runCheck(ctx context.Context, cfg *config.Config) bool {
 		line("Database", "%s (empty)", cfg.DBPath())
 	default:
 		line("Database", "%s (block %d)", cfg.DBPath(), tip.Height)
-	}
-	if v, ok, err := st.Get(ctx, state.NsMeta, "incomplete"); err == nil && ok {
-		line("State", "incomplete from %s (logic follows in phase 4)", v)
+		if h, err := state.New(st.View(ctx), &cfg.Chain, state.Options{}).ConsensusHash(); err == nil {
+			line("Consensus", "%s", h)
+		}
 	}
 	return ok
 }

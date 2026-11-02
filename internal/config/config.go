@@ -41,6 +41,10 @@ type Config struct {
 	ActivationAllowSenders []string
 	AlertAllowSenders      []string
 
+	// ConsensusHashEvery logs the consensus hash every n blocks (0: off), to
+	// compare with OmniLite's -omnishowblockconsensushash.
+	ConsensusHashEvery int64
+
 	Check bool
 }
 
@@ -82,7 +86,7 @@ func Load(args []string) (*Config, error) {
 	datadir := flags.String("datadir", defaultDataDir(), "data directory")
 	check := flags.Bool("check", false, "check the node connection and exit")
 	set := map[string]*string{}
-	for _, k := range []string{"network", "rpcconnect", "rpcport", "rpcuser", "rpcpassword", "rpccookiefile", "pollinterval", "undodepth", "omniactivationallowsender", "omnialertallowsender"} {
+	for _, k := range []string{"network", "rpcconnect", "rpcport", "rpcuser", "rpcpassword", "rpccookiefile", "pollinterval", "undodepth", "omniactivationallowsender", "omnialertallowsender", "consensushash"} {
 		set[k] = flags.String(k, "", "see "+FileName)
 	}
 	if err := flags.Parse(args); err != nil {
@@ -143,6 +147,11 @@ func Load(args []string) (*Config, error) {
 	}
 	c.ActivationAllowSenders = splitList(values["omniactivationallowsender"])
 	c.AlertAllowSenders = splitList(values["omnialertallowsender"])
+	if v := values["consensushash"]; v != "" {
+		if c.ConsensusHashEvery, err = strconv.ParseInt(v, 10, 64); err != nil || c.ConsensusHashEvery < 0 {
+			return nil, fmt.Errorf("consensushash: want a block count >= 0, got %q", v)
+		}
+	}
 	return c, nil
 }
 

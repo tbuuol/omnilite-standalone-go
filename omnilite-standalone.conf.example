@@ -26,3 +26,7 @@ rpcconnect=127.0.0.1
 # This changes the computed state, so never set it on mainnet.
 #omniactivationallowsender=any
 #omnialertallowsender=any
+
+# Log the consensus hash every n blocks (0: off). Compare with OmniLite's
+# omni_getcurrentconsensushash or -omnishowblockconsensushash.
+#consensushash=10000

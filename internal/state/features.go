@@ -189,8 +189,16 @@ func (e *ErrUnsupportedActivation) Error() string {
 		e.Activation.FeatureID, e.Activation.Name, e.Activation.Block, e.Activation.MinClientVersion, OmniCoreVersion)
 }
 
-// BeginBlock runs the start-of-block handling (CheckLiveActivations).
-func (s *State) BeginBlock(height int64) error {
+// BeginBlock runs the start-of-block handling: CheckLiveActivations and
+// eraseExpiredCrowdsale.
+func (s *State) BeginBlock(height, blockTime int64, blockHash string) error {
+	if err := s.liveActivations(height); err != nil {
+		return err
+	}
+	return s.expireCrowdsales(blockTime, blockHash)
+}
+
+func (s *State) liveActivations(height int64) error {
 	pending, err := s.tx.Scan(NsActivation, "p/")
 	if err != nil {
 		return err
@@ -262,8 +270,12 @@ func (s *State) deleteAlerts(sender string) error {
 	return nil
 }
 
-// EndBlock runs the end-of-block handling (CheckExpiredAlerts).
+// EndBlock runs the end-of-block handling: eraseExpiredAccepts and
+// CheckExpiredAlerts.
 func (s *State) EndBlock(height, blockTime int64) error {
+	if err := s.expireAccepts(height); err != nil {
+		return err
+	}
 	all, err := s.tx.Scan(NsAlert, "")
 	if err != nil {
 		return err

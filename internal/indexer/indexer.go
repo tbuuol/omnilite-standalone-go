@@ -66,6 +66,8 @@ type Indexer struct {
 	Log  *slog.Logger
 	// State holds the testing switches of the state engine.
 	State state.Options
+	// HashEvery logs the consensus hash every n blocks (0: off).
+	HashEvery int64
 
 	// prev caches outputs of transactions fetched for input lookups.
 	prev map[string][]omni.Output
@@ -83,7 +85,7 @@ func (ix *Indexer) ConnectBlock(ctx context.Context, tx *store.BlockTx, hdr *rpc
 	}
 
 	st := state.New(tx, ix.Dec.Params, ix.State)
-	if err := st.BeginBlock(blk.Height); err != nil {
+	if err := st.BeginBlock(blk.Height, blk.Time, blk.Hash); err != nil {
 		return err
 	}
 
@@ -127,19 +129,29 @@ func (ix *Indexer) ConnectBlock(ctx context.Context, tx *store.BlockTx, hdr *rpc
 			ix.Log.Debug("omni transaction", "block", blk.Height, "txid", rec.Txid, "kind", rec.Kind, "type", rec.Type, "sender", rec.Sender)
 		}
 		if msg == nil {
-			// DEx payments need the DEx state of phase 4. They can only match
-			// an accept, which already marks the state incomplete.
+			if _, err := st.ApplyPayment(&state.Payment{Txid: rec.Txid, Block: blk.Height, Sender: rec.Sender, Outputs: rec.Payments}); err != nil {
+				return err
+			}
 			continue
 		}
-		res, err := st.Apply(&state.Tx{Txid: rec.Txid, Block: blk.Height, Index: idx, BlockHash: blk.Hash, Sender: rec.Sender, Msg: msg})
+		if _, err := st.Apply(&state.Tx{
+			Txid: rec.Txid, Block: blk.Height, Index: idx, BlockHash: blk.Hash, BlockTime: blk.Time,
+			Sender: rec.Sender, Fee: rec.Fee, Msg: msg,
+		}); err != nil {
+			return err
+		}
+	}
+	if err := st.EndBlock(blk.Height, blk.Time); err != nil {
+		return err
+	}
+	if ix.HashEvery > 0 && blk.Height%ix.HashEvery == 0 && ix.Log != nil {
+		h, err := st.ConsensusHash()
 		if err != nil {
 			return err
 		}
-		if ix.Log != nil && res.Unsupported {
-			ix.Log.Warn("transaction type not implemented yet, state is incomplete from here", "block", blk.Height, "txid", rec.Txid, "type", rec.Type)
-		}
+		ix.Log.Info("consensus hash", "block", blk.Height, "hash", h)
 	}
-	return st.EndBlock(blk.Height, blk.Time)
+	return nil
 }
 
 // decode parses one marked transaction. It returns nil for transactions

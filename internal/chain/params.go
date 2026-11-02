@@ -34,6 +34,9 @@ type Params struct {
 	// Min- and MaxActivationBlocks bound how far ahead an activation may be
 	// scheduled (MIN_/MAX_ACTIVATION_BLOCKS).
 	MinActivationBlocks, MaxActivationBlocks int64
+	// FreezeWaitPeriod delays enabling freezing once the freeze notice
+	// feature is active (OMNI_FREEZE_WAIT_PERIOD).
+	FreezeWaitPeriod int64
 }
 
 // Feature IDs (src/omnicore/rules.h).
@@ -61,7 +64,7 @@ var (
 			FeatureSTOv1: NotActive, FeatureFreezeNotice: NotActive, FeatureFreeDEx: 2010500,
 			FeatureNonFungible: 2262000, FeatureNonFungibleIssuer: NotActive,
 		},
-		MinActivationBlocks: 8192, MaxActivationBlocks: 49152,
+		MinActivationBlocks: 8192, MaxActivationBlocks: 49152, FreezeWaitPeriod: 4096,
 	}
 	Testnet = Params{
 		Name: "test", CoreChain: "test", OmniGenesis: 101, RPCPort: 19332,
@@ -70,7 +73,7 @@ var (
 		Features: map[uint16]int64{
 			FeatureSTOv1: 0, FeatureFreezeNotice: 0, FeatureFreeDEx: 0, FeatureNonFungible: 0, FeatureNonFungibleIssuer: 0,
 		},
-		MinActivationBlocks: 0, MaxActivationBlocks: 9999999,
+		MinActivationBlocks: 0, MaxActivationBlocks: 9999999, FreezeWaitPeriod: 0,
 	}
 	Regtest = Params{
 		Name: "regtest", CoreChain: "regtest", OmniGenesis: 101, RPCPort: 19443,
@@ -80,7 +83,7 @@ var (
 			FeatureSTOv1: NotActive, FeatureFreezeNotice: NotActive, FeatureFreeDEx: NotActive,
 			FeatureNonFungible: 0, FeatureNonFungibleIssuer: NotActive,
 		},
-		MinActivationBlocks: 5, MaxActivationBlocks: 10,
+		MinActivationBlocks: 5, MaxActivationBlocks: 10, FreezeWaitPeriod: 10,
 	}
 )
 
