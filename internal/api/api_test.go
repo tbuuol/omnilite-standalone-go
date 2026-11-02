@@ -79,9 +79,10 @@ func (fakeNode) Call(_ context.Context, method string, result any, params ...any
 }
 
 type fixture struct {
-	t   *testing.T
-	st  *store.Store
-	srv *httptest.Server
+	t      *testing.T
+	st     *store.Store
+	srv    *httptest.Server
+	server *Server
 }
 
 type tx struct {
@@ -133,9 +134,10 @@ func newFixture(t *testing.T, blocks ...[]tx) *fixture {
 		}
 		prev = hash
 	}
-	srv := httptest.NewServer(&Server{Store: st, Params: params, Node: fakeNode{}, User: "u", Pass: "p"})
+	server := &Server{Store: st, Params: params, Node: fakeNode{}, User: "u", Pass: "p"}
+	srv := httptest.NewServer(server)
 	t.Cleanup(srv.Close)
-	return &fixture{t: t, st: st, srv: srv}
+	return &fixture{t: t, st: st, srv: srv, server: server}
 }
 
 // call returns the HTTP status and the raw result or error JSON.

@@ -3,6 +3,8 @@ package api
 import (
 	"strings"
 	"testing"
+
+	"github.com/tbuuol/omnilite-standalone/internal/wallet"
 )
 
 func TestCreatePayloads(t *testing.T) {
@@ -43,4 +45,30 @@ func TestCreateRawTx(t *testing.T) {
 func TestSendDisabled(t *testing.T) {
 	f := standard(t)
 	f.want("omni_send", `{"code":-32601,"message":"Method not found (sending is disabled, set wallet=1)"}`, alice, bob, 3, "1")
+}
+
+func TestManagementPayloads(t *testing.T) {
+	f := standard(t)
+	f.want("omni_createpayload_issuancemanaged", `"0000003601000500000000476d6500004e4654000000"`, 1, 5, 0, "Gme", "", "NFT", "", "")
+	f.want("omni_createpayload_issuancemanaged", `{"code":-8,"message":"Invalid property type (1 = indivisible, 2 = divisible, 5 = non-fungible only)"}`, 1, 3, 0, "", "", "NFT", "", "")
+	f.want("omni_createpayload_issuancefixed", `{"code":-3,"message":"Property appends/replaces are not yet supported"}`, 1, 1, 7, "", "", "X", "", "", "1")
+	f.want("omni_createpayload_issuancefixed", `{"code":-3,"message":"Property name must not be empty"}`, 1, 1, 0, "", "", "", "", "", "1")
+	f.want("omni_createpayload_issuancecrowdsale", `{"code":-8,"message":"Properties must be in the same ecosystem"}`, 1, 2, 0, "", "", "X", "", "", 2, "1", 0, 0, 0)
+	f.want("omni_createpayload_sto", `"0001000300000003000000000bebc20000000004"`, 3, "2", 4)
+	f.want("omni_createpayload_grant", `{"code":-1,"message":"omni_createpayload_grant propertyid \"amount\" ( \"memo\" )"}`, 3, "1")
+	f.want("omni_createpayload_closecrowdsale", `"0000003500000003"`, 3)
+	// P2SH targets get version byte 5, so OmniLite can read them back.
+	f.want("omni_createpayload_freeze", `"000000b9000000030000000005f5e10005`+strings.Repeat("b2", 20)+`"`, bob, 3, "1")
+	f.want("omni_createpayload_setnonfungibledata", `"000000c9000000030000000000000001000000000000000201616200"`, 3, 1, 2, true, "ab")
+}
+
+func TestManagementRequirements(t *testing.T) {
+	f := standard(t)
+	f.server.Wallet = &wallet.Wallet{} // checks fail before anything is built
+	f.want("omni_sendgrant", `{"code":-8,"message":"Property identifier does not refer to a managed property"}`, alice, bob, 3, "1")
+	f.want("omni_sendchangeissuer", `{"code":-3,"message":"Sender is not authorized to manage the property"}`, bob, alice, 3)
+	f.want("omni_sendclosecrowdsale", `{"code":-8,"message":"Property identifier does not refer to a crowdsale"}`, alice, 3)
+	f.want("omni_sendsto", `{"code":-3,"message":"Sender has insufficient balance"}`, alice, 3, "5000")
+	f.want("omni_setnonfungibledata", `{"code":-8,"message":"Property identifier does not refer to a non-fungible property"}`, 3, 1, 1, true, "x")
+	f.want("omni_sendissuancemanaged", `{"code":-3,"message":"Property name must not be empty"}`, alice, 1, 1, 0, "", "", "", "", "")
 }

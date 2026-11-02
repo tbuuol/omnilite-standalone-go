@@ -48,6 +48,7 @@ func init() {
 	methods["omni_createpayload_sendall"] = createPayloadSendAll
 	methods["omni_createpayload_sendnonfungible"] = createPayloadSendNonFungible
 	methods["omni_createpayload_anydata"] = createPayloadAnyData
+	registerManage()
 }
 
 // read runs fn on a snapshot query.

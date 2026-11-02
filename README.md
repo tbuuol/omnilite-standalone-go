@@ -4,10 +4,10 @@ Eigenständiger OmniLite-Indexer, der gegen jeden aktuellen `litecoind` läuft, 
 gepatchten Litecoin Core gebunden zu sein. Einzelanwender können damit auch Omni-Transaktionen senden,
 über die Wallet ihres `litecoind`. Eine eigene Wallet gibt es nicht. Details und Phasen: [Plan.md](Plan.md).
 
-**Stand:** Phase 0 bis 7. Der Indexer folgt der Chain ab dem Omni-Genesis-Block, behandelt Reorgs,
+**Stand:** Phase 0 bis 8. Der Indexer folgt der Chain ab dem Omni-Genesis-Block, behandelt Reorgs,
 berechnet den vollständigen Omni-State wie OmniLite 0.18.1 und bietet eine JSON-RPC-API mit den
 `omni_*`-Aufrufen von `omnilitecored`, auch für unbestätigte Transaktionen aus dem Mempool. Mit `wallet=1`
-sendet er Token über die Node-Wallet. Datenbanken älterer Phasen müssen gelöscht und neu aufgebaut werden.
+sendet er Token und verwaltet Properties über die Node-Wallet. Datenbanken älterer Phasen müssen gelöscht und neu aufgebaut werden.
 
 ## Voraussetzungen
 
@@ -41,7 +41,10 @@ zu ändern (oder `apiport=10003` zu setzen).
 ## Senden
 
 Mit `wallet=1` stehen `omni_send`, `omni_sendall`, `omni_sendnonfungible`, `omni_sendanydata` und
-`omni_sendrawtx` bereit. Coins, Schlüssel und Signatur kommen von der Wallet des `litecoind`
+`omni_sendrawtx` bereit, für die Token-Verwaltung `omni_sendissuancefixed`, `_sendissuancecrowdsale`,
+`_sendissuancemanaged`, `_sendgrant`, `_sendrevoke`, `_sendclosecrowdsale`, `_sendchangeissuer`,
+`_sendenablefreezing`, `_senddisablefreezing`, `_sendfreeze`, `_sendunfreeze`, `_sendsto` und
+`omni_setnonfungibledata`. Coins, Schlüssel und Signatur kommen von der Wallet des `litecoind`
 (bei mehreren Wallets `walletname=`). Jede Transaktion wird vorher gegen den eigenen Omni-State
 geprüft und nur gesendet, wenn sie gültig wäre.
 

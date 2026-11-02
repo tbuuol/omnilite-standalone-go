@@ -318,6 +318,19 @@ Zeile in OmniLite 0.18.1, aus der sie stammt.
 - Verteilen: `omni_sendsto`.
 - NFTs: Ausgabe über Managed Issuance, Grant mit NFT-Daten, NFT-Daten setzen (Typ 201).
 - **Fertig, wenn:** jede Aktion im Regtest einmal durchgespielt und gegen den Referenz-Node geprüft ist.
+- **Stand:** umgesetzt (`internal/api/manage.go`, `internal/omni/create.go`). Mit `wallet=1`:
+  `omni_sendissuancefixed`, `_sendissuancecrowdsale`, `_sendissuancemanaged`, `_sendsto`, `_sendgrant`,
+  `_sendrevoke`, `_sendclosecrowdsale`, `_sendchangeissuer`, `_sendenablefreezing`, `_senddisablefreezing`,
+  `_sendfreeze`, `_sendunfreeze` und `omni_setnonfungibledata` (Absender ist der Besitzer der Range bzw. der
+  Issuer). Dazu die passenden `omni_createpayload_*` ohne Wallet. Parameter, Prüfungen und Fehlermeldungen
+  wie OmniLite (`ParseText` bis 255 Zeichen, nur `previousid` 0, Managed-Typ 1/2/5, `RequireTokenIssuer`,
+  `RequireActiveCrowdsale` usw.), inklusive der Eigenheiten: `omni_createpayload_grant` verlangt das Memo,
+  `RequireSameEcosystem` vergleicht die Ecosystem-Nummer wie eine Property-ID. Der Dry-Run wendet eigene
+  unbestätigte Txs vorher an, so geht z. B. ein Grant auf eine Property, deren Issuance noch im Mempool
+  liegt. **Bewusste Abweichung:** Freeze/Unfreeze an `M…`-Adressen schreiben das Versionsbyte 5 statt 50
+  in die Payload, weil OmniLite die eigene Form nicht zurücklesen kann (siehe Risiken). Getestet mit
+  Payload-Rundläufen durch den eigenen Interpreter und einer simulierten Node-Wallet; die Gegenprobe im
+  Regtest steht aus.
 
 ### Phase 9 – DEx-Handel
 - Verkaufen: `omni_senddexsell`, `omni_sendnewdexorder`, `omni_sendupdatedexorder`, `omni_sendcanceldexorder`.
@@ -386,7 +399,7 @@ Konsens ist alles. Ein Indexer, der an einer Stelle abweicht, ist wertlos.
 | Sender-Regel | Falscher erster Input → Tx gilt als von einer anderen Adresse. | Builder setzt die Input-Reihenfolge fest, Dry-Run prüft den erkannten Sender. |
 | Rundung / Überlauf | Crowdsale- und STO-Mathe nutzt 128-Bit-Zwischenwerte. | `math/big` bzw. `uint128` mit Tests aus `uint256_extensions.h`. |
 | Bugs in 0.18.1 | Referenz-Fehler gehören zum Konsens. | Nachbauen, dokumentieren, nicht „reparieren". |
-| Freeze an `M…`-Adressen | `HashToAddress` kennt nur die Versionsbytes 48 (`L`) und 5 (alte `3…`-Form), nicht 50 (`M`). Ein Freeze-/Unfreeze-Payload, das wie `omni_sendfreeze` die `M`-Version einträgt, ist strukturell ungültig. | Decoder bildet das nach. Wallet (Phase 8) schreibt für P2SH-Ziele das Versionsbyte 5, sonst geht die Gebühr verloren. Vorher im Regtest gegen 0.18.1 bestätigen. |
+| Freeze an `M…`-Adressen | `HashToAddress` kennt nur die Versionsbytes 48 (`L`) und 5 (alte `3…`-Form), nicht 50 (`M`). Ein Freeze-/Unfreeze-Payload, das wie `omni_sendfreeze` die `M`-Version einträgt, ist strukturell ungültig. | Decoder bildet das nach. `omni_sendfreeze`/`_unfreeze` und die Payload-Aufrufe schreiben für P2SH-Ziele das Versionsbyte 5 (umgesetzt in Phase 8, Dry-Run prüft es). Im Regtest gegen 0.18.1 noch bestätigen. |
 | Iteration in `std::map` | Reihenfolge-abhängige Logik (STO-Verteilung, Consensus-Hash) folgt sortierten Keys. | Überall explizit sortieren. |
 | `-txindex` am Node | Nicht jeder Node hat ihn. | v1 setzt ihn voraus, eigener Prevout-Cache in Phase 11. |
 | Wartung OmniLite-Upstream | Falls OmniLite doch neue Features aktiviert. | Activations werden on-chain erkannt; unbekannte Features → Indexer stoppt mit klarer Meldung statt falsch weiterzurechnen. |

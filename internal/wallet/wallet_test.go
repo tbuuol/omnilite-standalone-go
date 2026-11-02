@@ -372,3 +372,24 @@ func TestCreateFromP2PKH(t *testing.T) {
 		t.Fatalf("carol: %v", err)
 	}
 }
+
+func TestIssueThenGrant(t *testing.T) {
+	ctx := context.Background()
+	w, node := newWallet(t)
+	node.coin(1, 1_000_000)
+	node.coin(2, 1_000_000)
+	// A long name forces class B.
+	info := &omni.PropertyInfo{Ecosystem: 1, Type: 2, Category: "Games", Name: strings.Repeat("N", 90)}
+	res, err := w.Send(ctx, &Request{From: alice, Payload: omni.PayloadIssuanceManaged(info)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Class != omni.ClassB {
+		t.Fatalf("class = %v", res.Class)
+	}
+	// Property 4 exists only in the mempool; the dry-run applies the
+	// pending issuance first, so the grant is valid.
+	if _, err := w.Send(ctx, &Request{From: alice, To: bob, Payload: omni.PayloadGrant(4, 50, "")}); err != nil {
+		t.Fatal(err)
+	}
+}
