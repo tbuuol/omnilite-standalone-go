@@ -7,10 +7,19 @@ import (
 	"time"
 
 	"github.com/tbuuol/omnilite-standalone/internal/indexer"
+	"github.com/tbuuol/omnilite-standalone/internal/mempool"
 	"github.com/tbuuol/omnilite-standalone/internal/omni"
 	"github.com/tbuuol/omnilite-standalone/internal/state"
 	"github.com/tbuuol/omnilite-standalone/internal/store"
 )
+
+// RefusedError reports a DEx payment the dry-run rejected: it would buy
+// no tokens, so the LTC would be lost.
+type RefusedError struct {
+	Message string
+}
+
+func (e *RefusedError) Error() string { return e.Message }
 
 // dryRun decodes the built transaction like the indexer will and applies
 // it to a copy of the current state, after the own transactions still
@@ -20,7 +29,11 @@ func (w *Wallet) dryRun(ctx context.Context, req *Request, b *built) (*indexer.R
 	if err != nil {
 		return nil, nil, err
 	}
-	if rec == nil || msg == nil {
+	if req.Pay != nil {
+		if rec == nil || rec.Kind != indexer.KindDExPayment {
+			return nil, nil, fmt.Errorf("the built transaction is not read as a DEx payment")
+		}
+	} else if rec == nil || msg == nil {
 		return nil, nil, fmt.Errorf("the built transaction is not a valid Omni transaction")
 	}
 	// The decoder must see what was meant to be sent.
@@ -30,7 +43,7 @@ func (w *Wallet) dryRun(ctx context.Context, req *Request, b *built) (*indexer.R
 	if req.To != "" && rec.Reference != req.To {
 		return nil, nil, fmt.Errorf("the built transaction would reference %s, not %s", rec.Reference, req.To)
 	}
-	if rec.Payload != hex.EncodeToString(req.Payload) {
+	if req.Pay == nil && rec.Payload != hex.EncodeToString(req.Payload) {
 		// Class B pads the last packet with zeros.
 		if p := hex.EncodeToString(req.Payload); len(rec.Payload) < len(p) || rec.Payload[:len(p)] != p {
 			return nil, nil, fmt.Errorf("the built transaction carries a different payload")
@@ -62,24 +75,39 @@ func (w *Wallet) dryRun(ctx context.Context, req *Request, b *built) (*indexer.R
 		}
 		index := 0
 		for _, e := range w.Pool.Own() {
-			if e.Msg == nil {
-				continue
-			}
-			if _, err := st.Apply(&state.Tx{Txid: e.Record.Txid, Block: block, Index: index, BlockTime: now,
-				Sender: e.Record.Sender, Fee: e.Record.Fee, Msg: e.Msg}); err != nil {
+			if _, err := apply(st, e, block, index, now); err != nil {
 				return err
 			}
 			index++
 		}
-		res, err = st.Apply(&state.Tx{Txid: rec.Txid, Block: block, Index: index, BlockTime: now,
-			Sender: rec.Sender, Fee: rec.Fee, Msg: msg})
+		res, err = apply(st, &mempool.Entry{Record: rec, Msg: msg}, block, index, now)
 		return err
 	})
 	if err != nil {
 		return nil, nil, err
 	}
+	if req.Pay != nil {
+		if res != nil {
+			for _, p := range res.Payments {
+				if p.Seller == req.Pay.Seller && p.Property == req.Pay.Property && p.Amount > 0 {
+					return rec, nil, nil
+				}
+			}
+		}
+		return nil, nil, &RefusedError{Message: "The payment would buy no tokens (accept expired, offer changed or nothing left), not sent"}
+	}
 	if !res.Valid {
 		return nil, nil, &InvalidError{Code: res.Code}
 	}
 	return rec, msg, nil
+}
+
+// apply runs an Omni transaction or a DEx payment on st as part of block.
+func apply(st *state.State, e *mempool.Entry, block int64, index int, now int64) (*state.Result, error) {
+	r := e.Record
+	if e.Msg == nil {
+		return st.ApplyPayment(&state.Payment{Txid: r.Txid, Block: block, Sender: r.Sender, Outputs: r.Payments})
+	}
+	return st.Apply(&state.Tx{Txid: r.Txid, Block: block, Index: index, BlockTime: now,
+		Sender: r.Sender, Fee: r.Fee, Msg: e.Msg})
 }

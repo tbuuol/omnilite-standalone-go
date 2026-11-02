@@ -4,10 +4,10 @@ Eigenständiger OmniLite-Indexer, der gegen jeden aktuellen `litecoind` läuft, 
 gepatchten Litecoin Core gebunden zu sein. Einzelanwender können damit auch Omni-Transaktionen senden,
 über die Wallet ihres `litecoind`. Eine eigene Wallet gibt es nicht. Details und Phasen: [Plan.md](Plan.md).
 
-**Stand:** Phase 0 bis 8. Der Indexer folgt der Chain ab dem Omni-Genesis-Block, behandelt Reorgs,
+**Stand:** Phase 0 bis 9. Der Indexer folgt der Chain ab dem Omni-Genesis-Block, behandelt Reorgs,
 berechnet den vollständigen Omni-State wie OmniLite 0.18.1 und bietet eine JSON-RPC-API mit den
 `omni_*`-Aufrufen von `omnilitecored`, auch für unbestätigte Transaktionen aus dem Mempool. Mit `wallet=1`
-sendet er Token und verwaltet Properties über die Node-Wallet. Datenbanken älterer Phasen müssen gelöscht und neu aufgebaut werden.
+sendet er Token, verwaltet Properties und handelt am DEx über die Node-Wallet. Datenbanken älterer Phasen müssen gelöscht und neu aufgebaut werden.
 
 ## Voraussetzungen
 
@@ -53,6 +53,12 @@ litecoin-cli getnewaddress "" p2sh-segwit        # neue M...-Adresse
 litecoin-cli walletpassphrase "<passphrase>" 60  # bei verschlüsselter Wallet
 curl --user omni:change-me -d '{"method":"omni_send","params":["M...","M...",3,"10.5"]}' http://127.0.0.1:9432
 ```
+
+DEx-Handel: `omni_senddexsell` bzw. `omni_sendnewdexorder`/`_sendupdatedexorder`/`_sendcanceldexorder` zum
+Verkaufen. Kaufen geht in zwei Schritten, beide von dir ausgelöst: `omni_senddexaccept` reserviert,
+`omni_senddexpay` zahlt. Eine Zahlung wird nur gesendet, wenn sie laut eigenem State Token kauft.
+`omni_listdexaccepts` zeigt offene Reservierungen mit den verbleibenden Blöcken, und das Log warnt kurz vor
+Ablauf. Automatisch gezahlt wird nie.
 
 Ein vorhandener Schlüssel, etwa von liteworlds.quest, wird in die Node importiert (`importprivkey`,
 bei Descriptor-Wallets `importdescriptors`). Wer den Indexer als Provider betreibt, lässt `wallet=0`.

@@ -110,6 +110,8 @@ func run(ctx context.Context, cfg *config.Config) error {
 		wal = &wallet.Wallet{Node: node, Dec: &indexer.Indexer{Node: client, Dec: dec}, Store: st, Pool: pool,
 			Params: &cfg.Chain, State: opts, FallbackFee: cfg.FallbackFee, Log: slog.Default()}
 		slog.Info("sending enabled", "wallet", wi.WalletName)
+		// Watches open DEx accepts of the wallet; it never pays.
+		go wal.Watch(ctx, cfg.PollInterval)
 		if !cfg.API {
 			slog.Warn("wallet=1 has no effect with api=0")
 		}

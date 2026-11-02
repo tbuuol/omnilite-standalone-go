@@ -348,6 +348,20 @@ Zeile in OmniLite 0.18.1, aus der sie stammt.
   und Zahlung ändern: im Dry-Run gezielt abfangen.
 - **Fertig, wenn:** ein kompletter Handel (Offer, Accept, Pay, Token kommen an) im Regtest zwischen
   zwei Wallets läuft und der Referenz-Node den gleichen Endstand zeigt.
+- **Stand:** umgesetzt (`internal/api/dex.go`, `internal/wallet/watch.go`). Mit `wallet=1`: `omni_senddexsell`,
+  `omni_sendnewdexorder`, `_sendupdatedexorder`, `_sendcanceldexorder`, `omni_senddexaccept` (zahlt mindestens
+  die `minacceptfee` des Offers als Gebühr, Schutz vor hoher Gebühr und Fenster unter 10 Blöcken mit
+  `override` wie OmniLite) und `omni_senddexpay` (Class A: Change, Exodus-Output, Seller). Dazu
+  `omni_createpayload_dexaccept`. Prüfungen wie OmniLite (keine Überzahlung, bei unteilbaren Token keine
+  Unterzahlung, passendes Accept). Der Dry-Run wendet die Zahlung auf den State samt eigener unbestätigter
+  Txs an und sendet nur, wenn sie beim Seller Token kauft; abgelaufene Accepts, geänderte Offers oder schon
+  bezahlte Reservierungen werden so abgefangen. Zusätzlich lehnt `omni_senddexpay` ab, wenn nur noch ein
+  Block im Payment Window bleibt (optionales fünftes Argument `override`, nicht in OmniLite).
+  **Zahlungs-Wächter:** läuft mit `wallet=1`, meldet neue Reservierungen der Node-Wallet im Log, warnt in den
+  letzten 3 Blöcken bei jedem Block und meldet, wenn eine Reservierung bezahlt oder abgelaufen ist. Er zahlt
+  nie. `omni_listdexaccepts` (Erweiterung, nicht in OmniLite) listet die offenen Reservierungen der Wallet
+  mit `blocksleft` und `amounttopay`. Ein kompletter Handel (Offer, Accept, Pay) ist mit einer simulierten
+  Node-Wallet getestet; der Regtest zwischen zwei Wallets gegen den Referenz-Node steht aus.
 
 ### Phase 10 – Betrieb
 - Windows-Dienst und systemd-Unit, Docker-Image.

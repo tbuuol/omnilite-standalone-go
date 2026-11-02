@@ -131,7 +131,8 @@ func (s *State) Offers() ([]OfferEntry, error) {
 
 // AcceptEntry is an accept with its buyer.
 type AcceptEntry struct {
-	Buyer string
+	Seller string
+	Buyer  string
 	*Accept
 }
 
@@ -147,11 +148,9 @@ func (s *State) Accepts() ([]AcceptEntry, error) {
 		if err := json.Unmarshal(kv.Value, &a); err != nil {
 			return nil, err
 		}
-		buyer := kv.Key
-		if i := strings.IndexByte(kv.Key, '+'); i >= 0 {
-			buyer = kv.Key[i+1:]
-		}
-		res = append(res, AcceptEntry{buyer, &a})
+		seller, rest, _ := strings.Cut(kv.Key, "-")
+		_, buyer, _ := strings.Cut(rest, "+")
+		res = append(res, AcceptEntry{Seller: seller, Buyer: buyer, Accept: &a})
 	}
 	return res, nil
 }
@@ -260,4 +259,15 @@ func (s *State) NFTOwner(id uint32, token int64) (string, error) { return s.nftO
 // NFTContiguous mirrors IsRangeContiguous.
 func (s *State) NFTContiguous(id uint32, start, end int64) (bool, error) {
 	return s.nftContiguous(id, start, end)
+}
+
+// HasOffer mirrors DEx_hasOffer.
+func (s *State) HasOffer(seller string) (bool, error) {
+	keys, err := s.sellerOffers(seller)
+	return len(keys) > 0, err
+}
+
+// Accept mirrors DEx_getAccept; nil if there is none.
+func (s *State) Accept(seller, buyer string, id uint32) (*Accept, error) {
+	return s.accept(seller, buyer, id)
 }

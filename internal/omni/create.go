@@ -165,3 +165,19 @@ func PayloadSetNonFungibleData(property uint32, start, end uint64, issuer bool, 
 	}
 	return cString(append(p, flag), data)
 }
+
+// PayloadDExSell mirrors CreatePayload_DExSell.
+func PayloadDExSell(property uint32, amount, desired uint64, window uint8, minFee uint64, action uint8) []byte {
+	p := binary.BigEndian.AppendUint32(payloadHeader(1, TypeTradeOffer), property)
+	p = binary.BigEndian.AppendUint64(p, amount)
+	p = binary.BigEndian.AppendUint64(p, desired)
+	p = append(p, window)
+	p = binary.BigEndian.AppendUint64(p, minFee)
+	return append(p, action)
+}
+
+// PayloadDExAccept mirrors CreatePayload_DExAccept.
+func PayloadDExAccept(property uint32, amount uint64) []byte {
+	p := binary.BigEndian.AppendUint32(payloadHeader(0, TypeAcceptOffer), property)
+	return binary.BigEndian.AppendUint64(p, amount)
+}

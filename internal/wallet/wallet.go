@@ -103,7 +103,8 @@ type Wallet struct {
 	Log         *slog.Logger
 
 	// mu serializes sends, so two sends never pick the same coins.
-	mu sync.Mutex
+	mu   sync.Mutex
+	mine mineCache
 }
 
 // Request describes an Omni transaction to build (WalletTxBuilder).
@@ -118,6 +119,19 @@ type Request struct {
 	ReferenceAmount int64
 	Payload         []byte
 	// Property and Amount are the pending debit (PendingAdd); 0 for none.
+	Property uint32
+	Amount   int64
+	// MinFee is the least miner fee, e.g. the minimum fee of a DEx offer.
+	MinFee int64
+	// Pay, if set, makes the transaction a DEx payment instead of carrying
+	// a payload (omni_senddexpay).
+	Pay *Payment
+}
+
+// Payment is the LTC payment for a DEx accept: a Class A transaction with
+// an Exodus output and the amount to the seller.
+type Payment struct {
+	Seller   string
 	Property uint32
 	Amount   int64
 }
@@ -153,7 +167,11 @@ func (w *Wallet) Send(ctx context.Context, req *Request) (*Result, error) {
 	rec.Txid = txid
 	w.Pool.Sent(&mempool.Entry{Record: rec, Msg: msg, Seen: time.Now()}, req.Property, req.Amount)
 	if w.Log != nil {
-		w.Log.Info("omni transaction sent", "txid", txid, "type", msg.Type, "from", req.From, "fee", b.fee)
+		if msg != nil {
+			w.Log.Info("omni transaction sent", "txid", txid, "type", msg.Type, "from", req.From, "fee", b.fee)
+		} else {
+			w.Log.Info("dex payment sent", "txid", txid, "from", req.From, "seller", req.Pay.Seller, "ltc", formatLTC(req.Pay.Amount), "fee", b.fee)
+		}
 	}
 	return &Result{Txid: txid, Hex: signed.Hex(), Fee: b.fee, Class: b.class}, nil
 }
@@ -293,7 +311,15 @@ func (w *Wallet) build(ctx context.Context, req *Request) (*built, error) {
 		}
 	}
 	senderScript := omni.ScriptForDestination(from)
+	exodus, err := omni.DecodeAddress(w.Params.Exodus, w.Params)
+	if err != nil {
+		return nil, err
+	}
+	exodusScript := omni.ScriptForDestination(exodus)
 	maxTotal := 20*feeRate + max(req.ReferenceAmount, 0)
+	if req.Pay != nil {
+		maxTotal = 20*feeRate + req.Pay.Amount + omniDust(exodusScript, relayFee)
+	}
 	t := NewTx()
 	t.LockTime = uint32(height) // anti fee sniping, as the wallet does
 	var kinds []inputKind
@@ -334,7 +360,17 @@ func (w *Wallet) build(ctx context.Context, req *Request) (*built, error) {
 
 	// Data outputs.
 	b := &built{tx: t, class: omni.ClassC}
-	if omni.UseClassC(len(req.Payload)) {
+	if req.Pay != nil {
+		// omni_senddexpay: Exodus marker, then the seller.
+		b.class = omni.ClassA
+		seller, err := omni.DecodeAddress(req.Pay.Seller, w.Params)
+		if err != nil {
+			return nil, fail(ErrCreateTx, "invalid seller address")
+		}
+		t.Outputs = append(t.Outputs,
+			TxOut{Value: omniDust(exodusScript, relayFee), Script: exodusScript},
+			TxOut{Value: req.Pay.Amount, Script: omni.ScriptForDestination(seller)})
+	} else if omni.UseClassC(len(req.Payload)) {
 		script, err := omni.ClassCScript(req.Payload)
 		if err != nil {
 			return nil, fail(ErrEncoding, err.Error())
@@ -354,11 +390,7 @@ func (w *Wallet) build(ctx context.Context, req *Request) (*built, error) {
 		if err != nil {
 			return nil, fail(ErrEncoding, err.Error())
 		}
-		exodus, err := omni.DecodeAddress(w.Params.Exodus, w.Params)
-		if err != nil {
-			return nil, err
-		}
-		for _, s := range append(scripts, omni.ScriptForDestination(exodus)) {
+		for _, s := range append(scripts, exodusScript) {
 			t.Outputs = append(t.Outputs, TxOut{Value: omniDust(s, relayFee), Script: s})
 		}
 	}
@@ -383,14 +415,15 @@ func (w *Wallet) build(ctx context.Context, req *Request) (*built, error) {
 	// Change back to the sender, first like omni_createrawtx_change; the
 	// reference rules skip the first output to the sender.
 	withChange := append([]TxOut{{Script: senderScript}}, t.Outputs...)
-	fee := getFee(feeRate, virtualSize(&Tx{Outputs: withChange}, kinds))
+	// The wallet pays at least the given minimum (min_fee in CreateTransaction).
+	fee := max(getFee(feeRate, virtualSize(&Tx{Outputs: withChange}, kinds)), req.MinFee)
 	change := total - out - fee
 	if change >= omniDust(senderScript, relayFee) {
 		withChange[0].Value = change
 		t.Outputs = withChange
 	} else {
 		fee = total - out
-		if need := getFee(feeRate, virtualSize(t, kinds)); fee < need {
+		if need := max(getFee(feeRate, virtualSize(t, kinds)), req.MinFee); fee < need {
 			return nil, fail(ErrCreateTx, fmt.Sprintf("insufficient funds at %s: %s LTC available, %s LTC needed",
 				req.From, formatLTC(total), formatLTC(out+need)))
 		}

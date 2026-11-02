@@ -72,3 +72,24 @@ func TestManagementRequirements(t *testing.T) {
 	f.want("omni_setnonfungibledata", `{"code":-8,"message":"Property identifier does not refer to a non-fungible property"}`, 3, 1, 1, true, "x")
 	f.want("omni_sendissuancemanaged", `{"code":-3,"message":"Property name must not be empty"}`, alice, 1, 1, 0, "", "", "", "", "")
 }
+
+func TestDExRequirements(t *testing.T) {
+	f := standard(t)
+	f.want("omni_createpayload_dexaccept", `"00000016000000030000000005f5e100"`, 3, "1")
+	f.server.Wallet = &wallet.Wallet{}
+	f.want("omni_sendnewdexorder", `{"code":-3,"message":"Another active sell offer from the given address already exists on the distributed exchange"}`, alice, 3, "1", "0.1", 10, "0.0001")
+	f.want("omni_sendupdatedexorder", `{"code":-3,"message":"Payment window must be within 1-255 blocks"}`, alice, 3, "1", "0.1", 0, "0.0001")
+	f.want("omni_sendcanceldexorder", `{"code":-3,"message":"No matching sell offer on the distributed exchange"}`, bob, 3)
+	f.want("omni_senddexsell", `{"code":-3,"message":"Invalid action (1 = new, 2 = update, 3 = cancel only)"}`, alice, 3, "1", "0.1", 10, "0.0001", 4)
+	f.want("omni_senddexaccept", `{"code":-3,"message":"No matching sell offer on the distributed exchange"}`, alice, bob, 3, "1")
+	f.want("omni_senddexpay", `{"code":-3,"message":"No matching accept order on the distributed exchange"}`, bob, alice, 3, "0.1")
+	f.want("omni_senddexpay", `{"code":-5,"message":"Invalid buyer address"}`, "ltc1qxyz", alice, 3, "0.1")
+}
+
+func TestFormatMoney(t *testing.T) {
+	for n, want := range map[int64]string{0: "0.00", 50000000: "0.50", 123456789: "1.23456789", 100000000: "1.00", 1000: "0.00001"} {
+		if got := formatMoney(n); got != want {
+			t.Errorf("formatMoney(%d) = %s, want %s", n, got, want)
+		}
+	}
+}

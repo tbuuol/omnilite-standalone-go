@@ -49,6 +49,7 @@ func init() {
 	methods["omni_createpayload_sendnonfungible"] = createPayloadSendNonFungible
 	methods["omni_createpayload_anydata"] = createPayloadAnyData
 	registerManage()
+	registerDEx()
 }
 
 // read runs fn on a snapshot query.
@@ -62,7 +63,10 @@ func (s *Server) read(ctx context.Context, fn func(q *query) error) error {
 func walletError(err error) error {
 	var we *wallet.Error
 	var inv *wallet.InvalidError
+	var ref *wallet.RefusedError
 	switch {
+	case errors.As(err, &ref):
+		return errorf(codeMisc, ref.Message)
 	case errors.As(err, &we):
 		return errorf(we.Code, we.Message)
 	case errors.As(err, &inv):

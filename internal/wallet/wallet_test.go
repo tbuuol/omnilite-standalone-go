@@ -194,12 +194,15 @@ func (n *fakeNode) GetRawTransaction(_ context.Context, txid string) (*rpc.Tx, e
 }
 
 // coin gives the fake wallet a P2SH-P2WPKH coin of alice.
-func (n *fakeNode) coin(i int, litoshi int64) {
+func (n *fakeNode) coin(i int, litoshi int64) { n.coinFor(aliceDest, i, litoshi) }
+
+// coinFor gives the fake wallet a P2SH-P2WPKH coin of d.
+func (n *fakeNode) coinFor(d omni.Destination, i int, litoshi int64) {
 	id := fmt.Sprintf("%064x", 0xc0170000+i)
-	script := hex.EncodeToString(omni.ScriptForDestination(aliceDest))
+	script := hex.EncodeToString(omni.ScriptForDestination(d))
 	n.coins = append(n.coins, map[string]any{
-		"txid": id, "vout": 0, "address": alice, "scriptPubKey": script,
-		"redeemScript": "0014" + strings.Repeat("a1", 20), "amount": json.Number(formatLTC(litoshi)),
+		"txid": id, "vout": 0, "address": d.Encode(params), "scriptPubKey": script,
+		"redeemScript": "0014" + hex.EncodeToString(d.Hash[:]), "amount": json.Number(formatLTC(litoshi)),
 		"confirmations": 10, "spendable": true, "safe": true,
 	})
 	out := rpc.TxOut{Value: json.Number(formatLTC(litoshi)), N: 0}
@@ -391,5 +394,94 @@ func TestIssueThenGrant(t *testing.T) {
 	// pending issuance first, so the grant is valid.
 	if _, err := w.Send(ctx, &Request{From: alice, To: bob, Payload: omni.PayloadGrant(4, 50, "")}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDExTrade(t *testing.T) {
+	ctx := context.Background()
+	w, node := newWallet(t)
+	bobDest := dest(omni.DestScriptHash, 0xb2)
+	node.coin(1, 1_000_000)
+	node.coinFor(bobDest, 2, 2_00000000)
+
+	// alice offers 100 tokens for 1 LTC, minimum accept fee 0.0001 LTC.
+	offer := omni.PayloadDExSell(3, 100_00000000, 1_00000000, 10, 10000, 1)
+	if _, err := w.Send(ctx, &Request{From: alice, Payload: offer, Property: 3, Amount: 100_00000000}); err != nil {
+		t.Fatal(err)
+	}
+	// bob reserves 40 tokens; the offer is still unconfirmed.
+	res, err := w.Send(ctx, &Request{From: bob, To: alice, Payload: omni.PayloadDExAccept(3, 40_00000000), MinFee: 10000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Fee < 10000 {
+		t.Fatalf("accept fee %d below the offer minimum", res.Fee)
+	}
+	// Paying for another seller buys nothing and is refused.
+	var ref *RefusedError
+	if _, err := w.Send(ctx, &Request{From: bob, Pay: &Payment{Seller: carol, Property: 3, Amount: 40000000}}); !errors.As(err, &ref) {
+		t.Fatalf("payment to carol: %v", err)
+	}
+	// bob pays 0.4 LTC for the 40 tokens.
+	res, err = w.Send(ctx, &Request{From: bob, Pay: &Payment{Seller: alice, Property: 3, Amount: 40000000}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Class != omni.ClassA {
+		t.Fatalf("class = %v", res.Class)
+	}
+	pay := node.sent[len(node.sent)-1]
+	exodus, _ := omni.DecodeAddress(params.Exodus, params)
+	if len(pay.Outputs) != 3 || !bytes.Equal(pay.Outputs[1].Script, omni.ScriptForDestination(exodus)) ||
+		pay.Outputs[2].Value != 40000000 || !bytes.Equal(pay.Outputs[2].Script, omni.ScriptForDestination(aliceDest)) {
+		t.Fatalf("payment outputs = %+v", pay.Outputs)
+	}
+	own := w.Pool.Own()
+	if last := own[len(own)-1]; last.Msg != nil || last.Record.Kind != indexer.KindDExPayment || last.Record.Sender != bob {
+		t.Fatalf("pending payment = %+v", last.Record)
+	}
+	// The accept is fully paid: a second payment buys nothing.
+	if _, err := w.Send(ctx, &Request{From: bob, Pay: &Payment{Seller: alice, Property: 3, Amount: 10000000}}); !errors.As(err, &ref) {
+		t.Fatalf("second payment: %v", err)
+	}
+}
+
+func TestOpenAccepts(t *testing.T) {
+	ctx := context.Background()
+	w, node := newWallet(t)
+	// Block 2: alice's offer and bob's accept, confirmed.
+	height := params.OmniGenesis + 1
+	btx, err := w.Store.Begin(ctx, store.Block{Height: height, Hash: strings.Repeat("02", 32), PrevHash: strings.Repeat("00", 32), Time: 1700000600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := state.New(btx, params, state.Options{})
+	for i, x := range []struct {
+		sender, ref string
+		payload     []byte
+	}{
+		{alice, "", omni.PayloadDExSell(3, 100_00000000, 1_00000000, 10, 0, 1)},
+		{bob, alice, omni.PayloadDExAccept(3, 40_00000000)},
+	} {
+		m, err := omni.Interpret(x.payload, x.sender, x.ref, params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := s.Apply(&state.Tx{Txid: fmt.Sprintf("%064x", 100+i), Block: height, Index: i, Sender: x.sender, Fee: 1000, Msg: m})
+		if err != nil || !res.Valid {
+			t.Fatalf("tx %d: %+v %v", i, res, err)
+		}
+	}
+	if err := btx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	node.height = height
+	list, err := w.OpenAccepts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Seller != alice || list[0].Buyer != bob || list[0].AmountToPay != 40000000 ||
+		list[0].BlocksLeft != 10 || !list[0].MineBuyer {
+		t.Fatalf("accepts = %+v", list)
 	}
 }
